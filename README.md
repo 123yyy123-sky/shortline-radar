@@ -55,6 +55,15 @@ cp config.example.json config.json
 
 Windows 上也可以直接双击 `run.bat`。
 
+想做成一键启动的桌面图标：
+
+```bash
+python -m pip install pywin32     # 只有建快捷方式需要，app 本身不依赖
+python tools/install_shortcut.py  # 或加 --name "涨停雷达" 自定义名字
+```
+
+会在桌面生成一个带专属图标的快捷方式，双击即启动并自动开浏览器。加 `--force` 覆盖同名文件。
+
 ---
 
 ## 数据源
@@ -178,8 +187,9 @@ shortline-radar/
 │   ├── notify.py           可选的消息推送
 │   └── cli.py              命令行入口
 ├── web/                    前端（原生 HTML/CSS/JS，无框架无构建）
+├── assets/                 图标（icon.ico 十个尺寸，icon.png 预览）
 ├── data/                   benchmark.json / symbols.json / demo_snapshot.json
-├── tools/                  重建数据文件的脚本
+├── tools/                  重建数据、生成图标、装桌面快捷方式
 └── docs/STRATEGY.md        回测结论与限界
 ```
 
