@@ -30,6 +30,19 @@ def cmd_scan(cfg, args):
         sys.stderr.write('\r' + ' ' * 60 + '\r')
         sys.stderr.flush()
 
+    if args.codes:
+        # 同花顺导入自选股接受「6 位代码，一行一个」，不要带后缀
+        rows = [x for x in r['rows'] if x['stage'] in ('pass', 'watch')]
+        if getattr(args, 'sealed_only', False):
+            rows = [x for x in rows if x['stage'] == 'pass']
+        rows.sort(key=lambda x: (x['stage'] != 'pass', x['vr']))
+        for x in rows:
+            print(x['code'].split('.')[0])
+        if not args.quiet:
+            sys.stderr.write(f'\r已输出 {len(rows)} 只（可打 '
+                             f'{sum(1 for x in rows if x["stage"] == "pass")}）\n')
+        return 1 if any(x['stage'] == 'pass' for x in rows) else 0
+
     if args.json:
         print(json.dumps(r, ensure_ascii=False, indent=2))
     else:
@@ -114,6 +127,9 @@ def main():
     s.add_argument('--at', help='HH:MM，默认当前时间')
     s.add_argument('--json', action='store_true')
     s.add_argument('--quiet', action='store_true', help='不显示进度')
+    s.add_argument('--codes', action='store_true',
+                   help='只输出 6 位代码，一行一个（贴进同花顺自选股导入）')
+    s.add_argument('--sealed-only', action='store_true', help='--codes 时只输出已封板的')
 
     sub.add_parser('sell', help='今天要卖的票')
     sub.add_parser('status', help='环境自检')

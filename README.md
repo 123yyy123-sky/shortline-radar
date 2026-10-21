@@ -152,12 +152,16 @@ python tools/build_symbols.py                              # 需要行情 CLI
 不想开界面的时候：
 
 ```bash
-python -m shortline.cli status            # 环境自检
-python -m shortline.cli scan              # 扫一次
-python -m shortline.cli scan --at 10:15   # 指定时点（回放测试）
-python -m shortline.cli scan --json       # 给脚本用
-python -m shortline.cli sell              # 今天要卖的票
+python -m shortline.cli status              # 环境自检
+python -m shortline.cli scan                # 扫一次
+python -m shortline.cli scan --at 10:15     # 指定时点（回放测试）
+python -m shortline.cli scan --json         # 给脚本用
+python -m shortline.cli scan --codes        # 只输出 6 位代码，贴进同花顺自选股
+python -m shortline.cli scan --codes --sealed-only   # 只要已封板的
+python -m shortline.cli sell                # 今天要卖的票
 ```
+
+`--codes` 输出一行一个 6 位代码，可以直接贴进同花顺「自选股 → 导入」。顺序是可打在前、再按量比升序。
 
 `scan` 在发现可打标的时返回退出码 `1`，可以直接接定时任务：
 
