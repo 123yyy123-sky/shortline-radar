@@ -43,13 +43,38 @@ ARGS = None
 # 命令行 --source 的临时覆盖。请求里每次都会重读 config.json，
 # 所以覆盖值必须单独存一份，不能只改一次 cfg。
 SOURCE_OVERRIDE = None
+STARTED_AT = time.time()
 
 # 扫描状态。同一时刻只允许跑一个 —— 扫描要拉全市场，并发没有意义还会被限流。
 STATE = {
     'running': False, 'stage': '', 'done': 0, 'total': 0, 'msg': '',
     'result': None, 'error': None, 'started_at': None, 'finished_at': None,
+    'last_active': time.time(),
 }
 LOCK = threading.Lock()
+
+
+def ensure_std_streams():
+    """pythonw.exe 启动时没有控制台，sys.stdout / sys.stderr 是 None，
+    任何 print 都会抛 AttributeError。这里重定向到 data/app.log，
+    双击启动（无窗口）时也能事后查原因。
+
+    返回日志路径；有控制台时返回 None。
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return None
+    logdir = os.path.join(ROOT, 'data')
+    os.makedirs(logdir, exist_ok=True)
+    path = os.path.join(logdir, 'app.log')
+    try:
+        if os.path.getsize(path) > 1024 * 1024:
+            os.replace(path, path + '.1')
+    except OSError:
+        pass
+    f = open(path, 'a', encoding='utf-8', buffering=1)
+    f.write(f'\n--- 启动 {datetime.now():%Y-%m-%d %H:%M:%S} ---\n')
+    sys.stdout = sys.stderr = f
+    return path
 
 
 # ---------------------------------------------------------------- 业务
@@ -158,6 +183,11 @@ class Handler(SimpleHTTPRequestHandler):
             sys.stderr.write('  %s %s\n' % (a[0] if a else '', a[1] if len(a) > 1 else ''))
 
     # ---------- 工具
+    def _touch(self):
+        """任何请求都算「页面还活着」，供空闲自停判断。"""
+        with LOCK:
+            STATE['last_active'] = time.time()
+
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False, default=str).encode('utf-8')
         self.send_response(code)
@@ -184,10 +214,14 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ---------- GET
     def do_GET(self):
+        self._touch()
         u = urlparse(self.path)
         path, qs = u.path, parse_qs(u.query)
 
         if path.startswith('/api/'):
+            if path == '/api/ping':
+                # 前端心跳。放最前面，不读配置文件，图的就是快。
+                return self._json({'ok': True})
             cfg = self._cfg()
             try:
                 if path == '/api/status':
@@ -235,6 +269,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ---------- POST
     def do_POST(self):
+        self._touch()
         u = urlparse(self.path)
         path = u.path
         cfg = self._cfg()
@@ -267,6 +302,7 @@ class Handler(SimpleHTTPRequestHandler):
         return self._json({'error': 'not found'}, 404)
 
     def do_DELETE(self):
+        self._touch()
         u = urlparse(self.path)
         if u.path == '/api/holdings':
             code = (parse_qs(u.query).get('code') or [''])[0]
@@ -290,14 +326,41 @@ def port_in_use(host, port):
         s.close()
 
 
+def idle_watchdog(srv, idle_exit):
+    """页面全关之后自动退出，不在后台留进程。
+
+    无窗口启动（pythonw.exe）时，用户没有「关掉那个黑窗口」这个动作，
+    必须靠这个机制收尾 —— 否则关掉浏览器后进程会一直占着内存和端口，
+    下次双击就变成「已经有一个实例在跑」。
+    """
+    if idle_exit <= 0:
+        return
+    while True:
+        time.sleep(5)
+        with LOCK:
+            if STATE['running']:
+                # 扫描途中不能算空闲
+                STATE['last_active'] = time.time()
+                continue
+            idle = time.time() - STATE['last_active']
+        if idle > idle_exit:
+            print(f'\n{int(idle)} 秒没有页面请求，自动退出。'
+                  f'（想让它常驻：--idle-exit 0）')
+            srv.shutdown()
+            return
+
+
 def main():
     global ARGS, SOURCE_OVERRIDE
+    log_path = ensure_std_streams()
     ap = argparse.ArgumentParser(description='短线雷达 —— A 股涨停板扫描器')
     ap.add_argument('--port', type=int, default=None)
     ap.add_argument('--host', default=None)
     ap.add_argument('--no-browser', action='store_true')
     ap.add_argument('--at', default=None, help='把现在当成几点，如 10:15（回放/测试用）')
     ap.add_argument('--source', default=None, help='临时覆盖数据源：hithink / demo')
+    ap.add_argument('--idle-exit', type=int, default=None, metavar='秒',
+                    help='多久没有页面请求就自动退出，0 = 常驻。默认读 config.json')
     ARGS = ap.parse_args()
 
     created = ensure_config_file()
@@ -309,18 +372,26 @@ def main():
     host = ARGS.host or cfg['web'].get('host', '127.0.0.1')
     port = ARGS.port or int(cfg['web'].get('port', 8848))
     url = f'http://{host}:{port}/'
+    if ARGS.idle_exit is not None:
+        idle_exit = ARGS.idle_exit
+    else:
+        idle_exit = int(cfg['web'].get('idle_exit_seconds', 120) or 0)
 
     print(f'短线雷达 v{__version__}')
     print(f'  数据源：{cfg["data_source"]}   配置：{"已建 " + os.path.basename(created) if created else CONFIG_PATH}')
     if ARGS.at:
         print(f'  时点已锁定在 {ARGS.at}（回放模式）')
+    if log_path:
+        print(f'  无控制台模式，日志：{log_path}')
+    if idle_exit > 0:
+        print(f'  {idle_exit} 秒无页面请求会自动退出（常驻用 --idle-exit 0）')
 
     if port_in_use(host, port):
         # 双击快捷方式时，旧实例往往还开着。这里不要报错退出，
         # 直接把浏览器指过去 —— 用户要的是「打开软件」，不是「看报错」。
         print(f'\n端口 {port} 上已经有一个实例在跑，直接用它。')
         print(f'  地址：{url}')
-        print('  （想换掉旧实例：先关掉它的窗口。想同时开两个：加 --port 9000）')
+        print('  （想关掉它：双击「停止短线雷达」，或者关掉浏览器等它自己退）')
         if cfg['web'].get('open_browser', True) and not ARGS.no_browser:
             webbrowser.open(url)
         return
@@ -338,11 +409,17 @@ def main():
     if cfg['web'].get('open_browser', True) and not ARGS.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
 
+    if idle_exit > 0:
+        threading.Thread(target=idle_watchdog, args=(srv, idle_exit),
+                         daemon=True).start()
+
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         print('\n已停止。')
         srv.shutdown()
+    finally:
+        print('服务已关闭。')
 
 
 if __name__ == '__main__':

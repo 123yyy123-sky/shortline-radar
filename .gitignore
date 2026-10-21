@@ -27,4 +27,5 @@ env/
 
 # 日志与临时文件
 *.log
+data/app.log*
 _sl_*.txt

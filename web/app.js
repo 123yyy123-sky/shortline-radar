@@ -408,6 +408,16 @@ function setupTabs() {
 async function init() {
   tickClock();
   setInterval(tickClock, 1000);
+
+  // 心跳：告诉后端「页面还开着」。无窗口启动时没有「关掉黑窗口」这个动作，
+  // 全靠它收尾 —— 所有标签页关掉后后端会自己退出，不在后台留进程。
+  const heartbeat = () => fetch('/api/ping', { cache: 'no-store' }).catch(() => {});
+  heartbeat();
+  setInterval(heartbeat, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) heartbeat();
+  });
+
   const activateTab = setupTabs();
   setupAuto();
 

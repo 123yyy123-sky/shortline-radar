@@ -3,7 +3,9 @@
 # 下面两个都是「工具脚本」才需要的，按需装：
 #
 #   pip install duckdb     # tools/build_benchmark.py 重建基准数据
-#   pip install pywin32    # tools/install_shortcut.py 建桌面快捷方式
 #   pip install pillow     # tools/make_icon.py 重新生成图标
+#
+# tools/install_shortcut.py 不需要 pywin32 —— 它调 Windows 自带的 cscript
+# 建快捷方式，所以「做桌面图标」这一步零依赖。
 
 duckdb>=0.10

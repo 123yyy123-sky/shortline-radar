@@ -58,11 +58,25 @@ Windows 上也可以直接双击 `run.bat`。
 想做成一键启动的桌面图标：
 
 ```bash
-python -m pip install pywin32     # 只有建快捷方式需要，app 本身不依赖
 python tools/install_shortcut.py  # 或加 --name "涨停雷达" 自定义名字
 ```
 
-会在桌面生成一个带专属图标的快捷方式，双击即启动并自动开浏览器。加 `--force` 覆盖同名文件。
+会在桌面生成**两个**图标：
+
+| 图标 | 动作 |
+|---|---|
+| 短线雷达 | 双击启动，浏览器自动打开，**不弹黑窗口** |
+| 停止短线雷达 | 双击就把后台的服务关掉 |
+
+加 `--force` 覆盖同名文件；加 `--console` 保留控制台窗口（想直接看日志的时候用）。
+
+**为什么没有黑窗口**：有窗口时那个黑框就是服务本体，关掉它服务就停，不关就一直占着任务栏。现在进程在后台静默跑，日志写 `data/app.log`。
+
+**它什么时候停**：
+
+- 关掉所有浏览器标签页 → 约 2 分钟后自己退出（`config.json` 的 `web.idle_exit_seconds`，改成 `0` 就常驻不清）
+- 想立刻停 → 双击「停止短线雷达」
+- 更想常驻 → `python app.py --idle-exit 0`
 
 ---
 
@@ -156,7 +170,8 @@ python tools/doctor.py
 | CLI 回话 rc≠0 | CLI 自身没登录 / 没配 key | 手动跑 `hithink-finance --version` 排查 |
 | 基准数据 asof 太旧 | `data/benchmark.json` 是某天快照 | `python tools/build_benchmark.py` |
 | 双击图标闪一下就没了，浏览器没打开 | 端口被上一个实例占着 | 现在会自动接管：打开 `http://127.0.0.1:8848` 就是它在跑 |
-| 页面能开，点扫描一直转圈 | 全市场 5,500 只要 30 秒左右 | 等它转完；转超过 2 分钟看窗口里的报错 |
+| 页面能开，点扫描一直转圈 | 全市场 5,500 只要 30 秒左右 | 等它转完；转超过 2 分钟看 `data/app.log` |
+| 双击后完全没反应 | 无窗口模式下看不到报错 | 看 `data/app.log`，或先跑 `python tools/doctor.py` |
 
 ---
 
@@ -221,7 +236,8 @@ python -m shortline.cli sell                # 今天要卖的票
 ```
 shortline-radar/
 ├── app.py                  本地 Web 服务（标准库 http.server）
-├── run.bat / run.sh        一键启动
+├── run.bat / run.sh        一键启动（有窗口）
+├── stop.bat                按端口关掉后台实例（停止图标调的它）
 ├── config.example.json     配置模板
 ├── shortline/
 │   ├── config.py           配置加载（本机路径全部外置）
