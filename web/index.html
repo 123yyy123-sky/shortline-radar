@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>短线雷达 · A股涨停扫描</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📡</text></svg>">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="pulse"></span>
+    <h1>短线雷达</h1>
+    <span class="ver" id="ver">v1.0</span>
+  </div>
+  <div class="meta">
+    <span class="badge" id="sessionBadge">—</span>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<div class="subbar">
+  <span>数据源 <b id="srcLabel">—</b></span>
+  <span class="sep">·</span>
+  <span>基准 <b id="benchDate">—</b></span>
+  <span class="sep">·</span>
+  <span>时点 <b id="atClock">—</b></span>
+  <span class="sep">·</span>
+  <span id="holdCount">持仓 —</span>
+</div>
+
+<div class="warns" id="warns"></div>
+
+<section class="toolbar">
+  <button id="btnScan" class="primary">开始扫描</button>
+  <label class="chk"><input type="checkbox" id="autoOn"> 自动刷新</label>
+  <select id="autoSec" class="mini">
+    <option value="60">60 秒</option>
+    <option value="120" selected>2 分钟</option>
+    <option value="300">5 分钟</option>
+  </select>
+  <input id="atInput" class="mini" placeholder="时点 如 10:15" size="10">
+  <span class="grow"></span>
+  <button id="btnFilter" class="ghost">筛选条件</button>
+</section>
+
+<div class="prog" id="prog">
+  <div class="prog-bar"><i id="progBar"></i></div>
+  <span id="progText">待命</span>
+</div>
+
+<section class="filters" id="filterBox" hidden>
+  <div class="frow">
+    <label>量比上限<input id="f_vr" type="number" step="0.1" min="0.1" max="10"></label>
+    <label>涨幅下限 %<input id="f_gain" type="number" step="0.5" min="0" max="20"></label>
+    <label>开盘涨幅下限 %<input id="f_ogmin" type="number" step="0.5" min="0" max="20"></label>
+    <label>开盘涨幅上限 %<input id="f_ogmax" type="number" step="0.5" min="0" max="20"></label>
+    <label>最大连板<input id="f_boards" type="number" step="1" min="1" max="10"></label>
+  </div>
+  <div class="frow">
+    <label class="chk"><input id="f_st" type="checkbox"> 排除 ST</label>
+    <label class="chk"><input id="f_bj" type="checkbox"> 排除北交所</label>
+    <label class="chk"><input id="f_sealed" type="checkbox"> 只保留已封板</label>
+    <span class="grow"></span>
+    <button id="btnSaveFilter" class="primary sm">保存并重扫</button>
+  </div>
+  <p class="hint">默认值就是回测里跑出正期望的那一组。没看懂之前别动。</p>
+</section>
+
+<nav class="tabs">
+  <button class="tab on" data-tab="scan">扫描结果</button>
+  <button class="tab" data-tab="hold">持仓卖出</button>
+  <button class="tab" data-tab="help">怎么看</button>
+</nav>
+
+<main>
+  <!-- 扫描结果 -->
+  <div class="pane on" id="pane-scan">
+    <div class="funnel" id="funnel"></div>
+
+    <div id="groups">
+      <div class="empty" id="empty">
+        <div class="empty-ico">📡</div>
+        <p>还没有扫过。</p>
+        <p class="dim">点上面的「开始扫描」。盘中扫一次约 20 秒；演示数据是瞬时的。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 持仓 -->
+  <div class="pane" id="pane-hold">
+    <div class="card">
+      <div class="card-head">
+        <h3>今天要卖的票</h3>
+        <span class="dim">规则：T+1 早上集合竞价挂<strong>跌停价</strong>一次清光</span>
+      </div>
+      <div id="holdList"><p class="dim pad">还没有持仓。</p></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>记一笔买入</h3></div>
+      <div class="frow pad">
+        <label>代码<input id="h_code" placeholder="002479 或 002479.SZ" size="14"></label>
+        <label>名称<input id="h_name" placeholder="可留空" size="10"></label>
+        <label>买价<input id="h_price" type="number" step="0.01" size="8"></label>
+        <label>数量<input id="h_shares" type="number" step="100" size="8"></label>
+        <label>买入日<input id="h_date" type="date"></label>
+        <button id="btnAddHold" class="primary sm">记下</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 说明 -->
+  <div class="pane" id="pane-help">
+    <div class="card prose">
+      <h3>这个工具在干什么</h3>
+      <p>从全市场里筛出「<b>开盘涨 3~9% + 缩量 + 首板</b>」的票，等你挂涨停价排队。
+         这个组合在十年回测里是 <b>+4.10% / 胜率 81.9% / 10 年 10 正</b>。</p>
+
+      <h3>三条最容易做错的地方</h3>
+      <ol>
+        <li><b>不要提前买。</b>没封板就买（半路）是 −0.20%、胜率 44.3%。必须等它真的封在涨停价。</li>
+        <li><b>不要追量比大的。</b>量比 ≥2 时期望 −1.23%。量比越大越亏，这是十年数据里唯一完全单调的规律。</li>
+        <li><b>不要打连板。</b>首板炸了亏 5%，连板炸了亏 10%~11%，而封住只多赚 0.5 个百分点。</li>
+      </ol>
+
+      <h3>卖出只有一个动作</h3>
+      <p>T+1 早上 9:25 集合竞价，挂<b>跌停价</b>，一次清光。
+         次日跳空 +2.15%，次日日内 −0.28% —— 钱全在开盘那一刻，之后净流出。</p>
+
+      <h3>买不进怎么办</h3>
+      <p><b>空仓，等下一个。</b>一字板本来就买不到，硬追的期望是 +0.07%，等于白干。
+         平均每天只有 2~3 个符合条件的标的，不需要抢。</p>
+
+      <h3>这些数字从哪来</h3>
+      <p>十年 1,034 万行日K、5,576 只股票。完整结论和 8 条限界见仓库的 <code>docs/STRATEGY.md</code>。</p>
+
+      <p class="disc">本工具只做筛选和提醒，不代下单，不构成投资建议。规则默认值来自历史统计，
+         历史不会简单重复。验证期请用最小仓位或模拟。</p>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

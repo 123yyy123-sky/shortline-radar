@@ -1,0 +1,26 @@
+# 本地配置（含路径和 webhook，绝不提交）
+config.json
+
+# 个人持仓
+data/holdings.json
+
+# 收盘归档（数据会越长越大）
+data/shortline_archive/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 日志与临时文件
+*.log
+_sl_*.txt

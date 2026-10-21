@@ -1,0 +1,6 @@
+# 核心程序不依赖任何第三方库，只用 Python 标准库。
+# 装了下面这个才能用 tools/build_benchmark.py 重建基准数据。
+#
+#   pip install duckdb
+
+duckdb>=0.10
