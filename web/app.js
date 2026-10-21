@@ -208,17 +208,18 @@ function vrClass(v) {
 
 function rowHtml(x) {
   const seal = x.seal_money ? Math.round(x.seal_money / 1e4).toLocaleString('zh-CN') : '—';
+  // data-label 给窄屏用：手机上表格变卡片，靠它显示字段名
   return `<tr>
-    <td class="l code">${esc(x.code)}</td>
-    <td class="l name">${esc(x.name || '—')}</td>
-    <td>${signed(x.gain)}</td>
-    <td>${signed(x.open_gain)}</td>
-    <td class="${vrClass(x.vr)}">${num(x.vr)}</td>
-    <td>${esc(x.seal_time || '—')}</td>
-    <td>${esc(x.board_text || (x.boards ? x.boards + '板' : '—'))}</td>
-    <td>${seal}</td>
-    <td class="dim">${x.to_limit_pct != null ? num(x.to_limit_pct) + '%' : '—'}</td>
-    <td class="l">${verdictTags(x)}</td>
+    <td class="l code" data-label="代码">${esc(x.code)}</td>
+    <td class="l name" data-label="名称">${esc(x.name || '—')}</td>
+    <td data-label="涨幅">${signed(x.gain)}</td>
+    <td data-label="开盘">${signed(x.open_gain)}</td>
+    <td data-label="量比" class="${vrClass(x.vr)}">${num(x.vr)}</td>
+    <td data-label="首封">${esc(x.seal_time || '—')}</td>
+    <td data-label="连板">${esc(x.board_text || (x.boards ? x.boards + '板' : '—'))}</td>
+    <td data-label="封单/万">${seal}</td>
+    <td class="dim" data-label="距涨停">${x.to_limit_pct != null ? num(x.to_limit_pct) + '%' : '—'}</td>
+    <td class="l" data-label="判定">${verdictTags(x)}</td>
   </tr>`;
 }
 

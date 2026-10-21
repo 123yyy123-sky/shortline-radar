@@ -67,7 +67,7 @@ out.WriteLine "WD=" & chk.WorkingDirectory
 out.WriteLine "ICON=" & chk.IconLocation
 
 If Len(STOPLINK) > 0 Then
-    MakeLink STOPLINK, STOPBAT, "", WD, STOPDESC, ICON
+    MakeLink STOPLINK, STOPTGT, STOPARG, WD, STOPDESC, ICON
     Set chk = sh.CreateShortcut(STOPLINK)
     out.WriteLine "STOP_TARGET=" & chk.TargetPath
 End If
@@ -166,6 +166,13 @@ def main():
         else:
             target, arguments, mode = BAT, '', '有窗口（没找到 pythonw，退回 run.bat）'
 
+    # 停止图标也跟着走无窗口：双击 stop.bat 会闪一个黑框，用 pythonw 跑 stop.py 就没有
+    stop_py = os.path.join(ROOT, 'tools', 'stop.py')
+    if mode.startswith('无窗口') and os.path.isfile(stop_py):
+        stop_target, stop_args = target, '"tools\\stop.py"'
+    else:
+        stop_target, stop_args = STOP_BAT, ''
+
     have_icon = os.path.isfile(ICON)
     if not have_icon:
         print('· 图标不存在，先跑一次 tools/make_icon.py（将不设图标）')
@@ -173,7 +180,8 @@ def main():
     # 先算桌面路径（用 VBS 的 SpecialFolders，避免自己猜）
     probe = run_vbs({'PROBE': '', 'LINK': os.path.join(
         os.environ.get('TEMP', '.'), '_sl_probe.lnk'), 'TGT': BAT, 'ARG': '',
-        'WD': ROOT, 'DESC': '', 'ICON': '', 'STOPLINK': '', 'STOPBAT': ''})
+        'WD': ROOT, 'DESC': '', 'ICON': '', 'STOPLINK': '',
+        'STOPTGT': '', 'STOPARG': ''})
     desk = args.desktop or probe.get('DESKTOP') or os.path.expanduser('~')
     try:
         os.remove(os.path.join(os.environ.get('TEMP', '.'), '_sl_probe.lnk'))
@@ -198,7 +206,8 @@ def main():
         'DESC': '短线雷达 — A股涨停板扫描器（缩量 + 开盘涨 3~9% + 首板）',
         'ICON': ICON if have_icon else '',
         'STOPLINK': stop_lnk_use,
-        'STOPBAT': STOP_BAT,
+        'STOPTGT': stop_target,
+        'STOPARG': stop_args,
         'STOPDESC': '关掉正在后台运行的短线雷达',
     })
 

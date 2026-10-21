@@ -72,11 +72,15 @@ python tools/install_shortcut.py  # 或加 --name "涨停雷达" 自定义名字
 
 **为什么没有黑窗口**：有窗口时那个黑框就是服务本体，关掉它服务就停，不关就一直占着任务栏。现在进程在后台静默跑，日志写 `data/app.log`。
 
+**注意一个坑**：无窗口启动后，你调用的每一个命令行工具都会自己弹一个控制台窗口。本程序已经用 `CREATE_NO_WINDOW` 把它堵掉了，如果你自己二次开发时新增子进程调用，记得同样处理，否则黑窗会一直弹。
+
 **它什么时候停**：
 
 - 关掉所有浏览器标签页 → 约 2 分钟后自己退出（`config.json` 的 `web.idle_exit_seconds`，改成 `0` 就常驻不清）
 - 想立刻停 → 双击「停止短线雷达」
 - 更想常驻 → `python app.py --idle-exit 0`
+
+**启动失败会怎样**：无窗口模式下没有控制台，出错本来是静默的。现在会弹一个系统对话框，直接显示错误原因，同时写进 `data/app.log`。
 
 ---
 
@@ -171,7 +175,14 @@ python tools/doctor.py
 | 基准数据 asof 太旧 | `data/benchmark.json` 是某天快照 | `python tools/build_benchmark.py` |
 | 双击图标闪一下就没了，浏览器没打开 | 端口被上一个实例占着 | 现在会自动接管：打开 `http://127.0.0.1:8848` 就是它在跑 |
 | 页面能开，点扫描一直转圈 | 全市场 5,500 只要 30 秒左右 | 等它转完；转超过 2 分钟看 `data/app.log` |
-| 双击后完全没反应 | 无窗口模式下看不到报错 | 看 `data/app.log`，或先跑 `python tools/doctor.py` |
+| 双击后完全没反应 | 无窗口模式下看不到报错 | 现在会弹出对话框说明原因；也可以看 `data/app.log` 或跑 `python tools/doctor.py` |
+| 一打开就不停弹黑色小窗 | pythonw 没有控制台，每次调命令行工具都会给它新建一个控制台窗口 | 已在 `shortline/datasource.py` 里用 `CREATE_NO_WINDOW` 修掉；自己加子进程调用要照做 |
+
+跑完想确认整条链路通不通，用自带的自检：
+
+```bash
+python tools/selftest.py          # 状态 -> 触发扫描 -> 轮询 -> 打印漏斗
+```
 
 ---
 
@@ -236,8 +247,8 @@ python -m shortline.cli sell                # 今天要卖的票
 ```
 shortline-radar/
 ├── app.py                  本地 Web 服务（标准库 http.server）
-├── run.bat / run.sh        一键启动（有窗口）
-├── stop.bat                按端口关掉后台实例（停止图标调的它）
+├── run.bat / run.sh        一键启动（有窗口，方便看日志）
+├── stop.bat                命令行版停止脚本（桌面图标用的是 tools/stop.py）
 ├── config.example.json     配置模板
 ├── shortline/
 │   ├── config.py           配置加载（本机路径全部外置）
@@ -253,6 +264,8 @@ shortline-radar/
 ├── vendor/                 本机行情 CLI 转发脚本（生成物，不进版本库）
 ├── tools/
 │   ├── doctor.py           环境自检 —— 扫描跑不起来先跑它
+│   ├── selftest.py         端到端自检 —— 状态→扫描→轮询→漏斗
+│   ├── stop.py             按端口停掉后台实例（停止图标调它，无窗口）
 │   ├── make_vendor_shim.py 生成 vendor/ 转发脚本（摆脱 PATH 依赖）
 │   ├── build_benchmark.py  重建基准数据
 │   ├── build_symbols.py    重建简称表

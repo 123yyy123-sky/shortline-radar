@@ -291,3 +291,55 @@ tbody td.l { text-align: left; }
   .funnel { flex-wrap: wrap; }
   .fstep { flex: 1 1 45%; border-bottom: 1px solid var(--line); }
 }
+
+/* 手机：表格拆成卡片。
+   十列横滑看盘不现实，一屏只能看到三四列，还得来回拖。
+   改成每只票一张卡，字段名用 data-label 顶在上头。 */
+@media (max-width: 640px) {
+  .tw { overflow-x: visible; border: none; border-radius: 0; background: none; }
+  table { min-width: 0; display: block; }
+  thead { display: none; }
+  .group tbody { display: block; }
+  .group tbody tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+  }
+  .group tbody tr:hover td { background: none; }
+  .group tbody td {
+    display: block;
+    padding: 0;
+    border: none;
+    text-align: left;
+    white-space: normal;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 13px;
+  }
+  /* 字段名做小标签 */
+  .group tbody td::before {
+    content: attr(data-label);
+    display: block;
+    font: 11px/1.4 -apple-system, "Microsoft YaHei", sans-serif;
+    color: var(--tx3);
+    margin-bottom: 2px;
+  }
+  /* 代码和名称排一起，判定独占一行 */
+  .group tbody td:nth-child(1) { grid-column: span 1; }
+  .group tbody td:nth-child(2) { grid-column: span 2; }
+  .group tbody td:nth-child(2)::before { content: ""; display: none; }
+  .group tbody td:nth-child(10) {
+    grid-column: 1 / -1;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
+  .group tbody td:nth-child(10)::before { display: none; }
+  .group-head { flex-wrap: wrap; gap: 4px 8px; }
+  .group-head .tip { flex-basis: 100%; }
+}
+

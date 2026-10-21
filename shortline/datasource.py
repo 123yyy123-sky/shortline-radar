@@ -16,12 +16,30 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 
 from .config import ROOT
+
+# Windows 上 pythonw.exe 启动的进程没有控制台。这时去调一个控制台程序
+# （hithink-finance 是 .cmd，会拉起 cmd.exe + node.exe），系统会**新建一个
+# 黑色控制台窗口**给它。前端每轮询一次状态就会调一次 --version，
+# 于是黑窗一直弹。
+# CREATE_NO_WINDOW 让子进程共用「没有窗口」的状态，一个都不弹。
+if os.name == 'nt':
+    _CREATE_NO_WINDOW = 0x08000000
+    SPAWN_KW = {'creationflags': _CREATE_NO_WINDOW,
+                'stdin': subprocess.DEVNULL}
+else:
+    SPAWN_KW = {'stdin': subprocess.DEVNULL}
 
 
 class SourceError(RuntimeError):
     """数据源不可用。消息直接把怎么解决写在里面，界面原文显示。"""
+
+
+# health() 每次状态轮询都会被调一次，每次都起一个进程太亏。
+# 缓存 60 秒：CLI 会不会挂，一分钟内不会有变化。
+_HEALTH_CACHE = {}
 
 
 class BaseSource:
@@ -90,18 +108,27 @@ class HithinkSource(BaseSource):
             '  3. 在 config.json 的 hithink.cli_path 填绝对路径')
 
     def health(self):
+        key = ('hithink', self.cli)
+        now = time.time()
+        hit = _HEALTH_CACHE.get(key)
+        if hit and now - hit[0] < 60:
+            return hit[1]
         try:
             r = subprocess.run([self.cli, '--version'], capture_output=True, text=True,
-                               encoding='utf-8', errors='replace', timeout=30)
+                               encoding='utf-8', errors='replace', timeout=30,
+                               **SPAWN_KW)
             out = (r.stdout or r.stderr or '').strip().splitlines()
-            return True, out[0] if out else '版本未知'
+            res = (True, out[0] if out else '版本未知')
         except Exception as e:
-            return False, f'CLI 调用失败：{e}'
+            res = (False, f'CLI 调用失败：{e}')
+        _HEALTH_CACHE[key] = (now, res)
+        return res
 
     def _call(self, args, timeout=None):
         r = subprocess.run([self.cli] + args, capture_output=True, text=True,
                            encoding='utf-8', errors='replace',
-                           timeout=timeout or self.timeout)
+                           timeout=timeout or self.timeout,
+                           **SPAWN_KW)
         try:
             d = json.loads(r.stdout)
         except Exception:

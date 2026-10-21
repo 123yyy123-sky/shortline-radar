@@ -18,6 +18,7 @@
   GET  /api/config          当前配置（脱敏后）
 """
 import argparse
+import io
 import json
 import os
 import sys
@@ -75,6 +76,41 @@ def ensure_std_streams():
     f.write(f'\n--- 启动 {datetime.now():%Y-%m-%d %H:%M:%S} ---\n')
     sys.stdout = sys.stderr = f
     return path
+
+
+def fatal(msg):
+    """启动失败时告诉用户到底怎么了。
+
+    pythonw 没有控制台，异常只会静默吞掉 —— 用户看到的只是「双击没反应」。
+    所以除了写日志，还要弹一个系统对话框。
+    """
+    try:
+        print(msg)
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            0, msg, '短线雷达 —— 启动失败', 0x10)
+    except Exception:
+        pass
+
+
+def open_browser(url):
+    """打开默认浏览器。
+
+    os.startfile 走 ShellExecute，比 webbrowser 在 pythonw 下更稳；
+    webbrowser 只作退路。
+    """
+    try:
+        os.startfile(url)          # noqa: 仅 Windows
+        return True
+    except Exception:
+        pass
+    try:
+        return webbrowser.open(url)
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------- 业务
@@ -212,6 +248,7 @@ class Handler(SimpleHTTPRequestHandler):
             cfg['data_source'] = SOURCE_OVERRIDE
         return cfg
 
+
     # ---------- GET
     def do_GET(self):
         self._touch()
@@ -318,12 +355,15 @@ def port_in_use(host, port):
     """Windows 上允许两个进程绑同一端口，只有一个能收连接，
     表现就是「新起的服务打不开」。所以启动前先探一下。"""
     import socket
+    # 绑 0.0.0.0 时不能拿它当连接目标，探回环地址
+    probe = '127.0.0.1' if host in ('0.0.0.0', '::', '') else host
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(0.4)
     try:
-        return s.connect_ex((host, port)) == 0
+        return s.connect_ex((probe, port)) == 0
     finally:
         s.close()
+
 
 
 def idle_watchdog(srv, idle_exit):
@@ -350,7 +390,7 @@ def idle_watchdog(srv, idle_exit):
             return
 
 
-def main():
+def _main():
     global ARGS, SOURCE_OVERRIDE
     log_path = ensure_std_streams()
     ap = argparse.ArgumentParser(description='短线雷达 —— A 股涨停板扫描器')
@@ -361,6 +401,8 @@ def main():
     ap.add_argument('--source', default=None, help='临时覆盖数据源：hithink / demo')
     ap.add_argument('--idle-exit', type=int, default=None, metavar='秒',
                     help='多久没有页面请求就自动退出，0 = 常驻。默认读 config.json')
+    ap.add_argument('--lan', action='store_true',
+                    help='绑 0.0.0.0，让同一 WiFi 下的其他设备也能打开（默认只给本机）')
     ARGS = ap.parse_args()
 
     created = ensure_config_file()
@@ -370,8 +412,12 @@ def main():
         cfg['data_source'] = ARGS.source
 
     host = ARGS.host or cfg['web'].get('host', '127.0.0.1')
+    if ARGS.lan:
+        host = '0.0.0.0'
     port = ARGS.port or int(cfg['web'].get('port', 8848))
-    url = f'http://{host}:{port}/'
+    # 绑 0.0.0.0 不能在浏览器里直接打开，本机要看回环地址
+    local_url = f'http://{"127.0.0.1" if host in ("0.0.0.0", "::") else host}:{port}/'
+
     if ARGS.idle_exit is not None:
         idle_exit = ARGS.idle_exit
     else:
@@ -390,10 +436,10 @@ def main():
         # 双击快捷方式时，旧实例往往还开着。这里不要报错退出，
         # 直接把浏览器指过去 —— 用户要的是「打开软件」，不是「看报错」。
         print(f'\n端口 {port} 上已经有一个实例在跑，直接用它。')
-        print(f'  地址：{url}')
+        print(f'  地址：{local_url}')
         print('  （想关掉它：双击「停止短线雷达」，或者关掉浏览器等它自己退）')
         if cfg['web'].get('open_browser', True) and not ARGS.no_browser:
-            webbrowser.open(url)
+            open_browser(local_url)
         return
 
     try:
@@ -403,11 +449,11 @@ def main():
         print('换一个端口：python app.py --port 9000')
         sys.exit(1)
 
-    print(f'  地址：{url}')
-    print('  按 Ctrl+C 停止\n')
+    print(f'  地址：{local_url}')
+    print('  按 Ctrl+C 停止（或者直接双击「停止短线雷达」）\n')
 
     if cfg['web'].get('open_browser', True) and not ARGS.no_browser:
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.8, lambda: open_browser(local_url)).start()
 
     if idle_exit > 0:
         threading.Thread(target=idle_watchdog, args=(srv, idle_exit),
@@ -420,6 +466,24 @@ def main():
         srv.shutdown()
     finally:
         print('服务已关闭。')
+
+
+def main():
+    """双击启动时的统一入口：任何异常都要让用户看见。"""
+    import traceback
+    try:
+        _main()
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        pass
+    except Exception:
+        detail = traceback.format_exc()
+        tail = '\n'.join(detail.strip().splitlines()[-8:])
+        fatal(f'启动失败，原因是：\n\n{tail}\n\n'
+              f'完整日志在 data\\app.log。\n'
+              f'也可以在命令行里跑 run.bat，能看到更详细的输出。')
+        sys.exit(1)
 
 
 if __name__ == '__main__':
