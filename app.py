@@ -316,10 +316,14 @@ def main():
         print(f'  时点已锁定在 {ARGS.at}（回放模式）')
 
     if port_in_use(host, port):
-        print(f'\n端口 {port} 已经有服务在跑。')
-        print(f'直接打开：{url}')
-        print('如果是旧实例想换掉它，先关掉那个窗口，或者用 --port 换个端口。')
-        sys.exit(2)
+        # 双击快捷方式时，旧实例往往还开着。这里不要报错退出，
+        # 直接把浏览器指过去 —— 用户要的是「打开软件」，不是「看报错」。
+        print(f'\n端口 {port} 上已经有一个实例在跑，直接用它。')
+        print(f'  地址：{url}')
+        print('  （想换掉旧实例：先关掉它的窗口。想同时开两个：加 --port 9000）')
+        if cfg['web'].get('open_browser', True) and not ARGS.no_browser:
+            webbrowser.open(url)
+        return
 
     try:
         srv = ThreadingHTTPServer((host, port), Handler)

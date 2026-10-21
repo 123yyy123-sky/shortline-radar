@@ -73,11 +73,19 @@ python tools/install_shortcut.py  # 或加 --name "涨停雷达" 自定义名字
 软件只需要两样东西：**全市场实时快照** + **涨停池**。默认实现走 `hithink-finance` 命令行工具：
 
 1. 装好 CLI，确认 `hithink-finance symbol list --limit 3` 能返回数据
-2. 让它能被找到 —— 三选一：
+2. 让它能被找到 —— 以下任选一种：
+   - **推荐**：`python tools/make_vendor_shim.py`，自动探测本机 node 和 CLI，
+     在 `vendor/` 生成一个写死绝对路径的转发脚本
    - 把可执行文件放进 `vendor/`
    - 设环境变量 `HITHINK_CLI=<路径>`
    - 在 `config.json` 里填 `hithink.cli_path`
 3. `config.json` 保持 `"data_source": "hithink"`
+
+> **为什么要用转发脚本**：从资源管理器双击启动时，进程拿到的是系统持久化的
+> PATH。node 常常只装在某个带版本的目录里、没进 PATH，于是软件找不到 CLI，
+> 一按扫描就报「找不到 hithink-finance」——在终端里手动跑却是好的。
+> 转发脚本把 node 和 CLI 的绝对路径写死，就不依赖 PATH 了。
+> node 升级换目录后重跑一次即可。
 
 ### 方案 B：接别的数据源
 
@@ -116,6 +124,39 @@ python tools/build_symbols.py                              # 需要行情 CLI
 ```
 
 界面会自己检查基准日期，过期会提示。
+
+---
+
+## 按扫描没反应 / 报「找不到 hithink-finance」
+
+先跑自检，它会直接指出是哪一环断了：
+
+```bash
+python tools/doctor.py
+```
+
+正常输出长这样（`[WARN]` 可以不管，`[FAIL]` 才是问题）：
+
+```
+[ OK ] Python 3.11.9
+[ OK ] config.json           : data_source=hithink
+[WARN] PATH 里的 node       : 没有
+[WARN] PATH 里的 hithink CLI : 没有
+[ OK ] CLI 实际路径         : ...\vendor\hithink-finance.cmd
+[ OK ] 来源                 : vendor/ 转发脚本
+[ OK ] CLI 回话             : rc=0 0.1.13
+[ OK ] 基准数据             : 5576 只，截至 2026-10-20
+```
+
+对照处理：
+
+| 症状 | 原因 | 处理 |
+|---|---|---|
+| `CLI 实际路径` 那项是 FAIL，提示找不到 hithink-finance | 双击启动的进程 PATH 里没有 node | `python tools/make_vendor_shim.py` |
+| CLI 回话 rc≠0 | CLI 自身没登录 / 没配 key | 手动跑 `hithink-finance --version` 排查 |
+| 基准数据 asof 太旧 | `data/benchmark.json` 是某天快照 | `python tools/build_benchmark.py` |
+| 双击图标闪一下就没了，浏览器没打开 | 端口被上一个实例占着 | 现在会自动接管：打开 `http://127.0.0.1:8848` 就是它在跑 |
+| 页面能开，点扫描一直转圈 | 全市场 5,500 只要 30 秒左右 | 等它转完；转超过 2 分钟看窗口里的报错 |
 
 ---
 
@@ -193,7 +234,15 @@ shortline-radar/
 ├── web/                    前端（原生 HTML/CSS/JS，无框架无构建）
 ├── assets/                 图标（icon.ico 十个尺寸，icon.png 预览）
 ├── data/                   benchmark.json / symbols.json / demo_snapshot.json
-├── tools/                  重建数据、生成图标、装桌面快捷方式
+├── vendor/                 本机行情 CLI 转发脚本（生成物，不进版本库）
+├── tools/
+│   ├── doctor.py           环境自检 —— 扫描跑不起来先跑它
+│   ├── make_vendor_shim.py 生成 vendor/ 转发脚本（摆脱 PATH 依赖）
+│   ├── build_benchmark.py  重建基准数据
+│   ├── build_symbols.py    重建简称表
+│   ├── make_demo.py        生成演示数据
+│   ├── make_icon.py        生成图标
+│   └── install_shortcut.py 装桌面快捷方式
 └── docs/STRATEGY.md        回测结论与限界
 ```
 

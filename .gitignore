@@ -1,6 +1,10 @@
 # 本地配置（含路径和 webhook，绝不提交）
 config.json
 
+# 本机专用的行情 CLI 转发脚本（里面写死了本机绝对路径）
+# 用 python tools/make_vendor_shim.py 生成
+vendor/
+
 # 个人持仓
 data/holdings.json
 
