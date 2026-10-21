@@ -1,0 +1,11 @@
+# 统一用 LF，否则 Windows 上提交会把整份文件标成改动
+* text=auto eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.ico binary
+
+# Windows 批处理必须是 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
