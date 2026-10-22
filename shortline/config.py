@@ -46,6 +46,17 @@ DEFAULTS = {
         'require_sealed': False,      # True = 只列已封板的；False = 未封的也列出来盯着
     },
 
+    # 半路板模式（mode=banlu）的条件，来源 _bt_banluban.py 回测（2026-10-22）：
+    # 20cm T=5% 首板+量比≥1.5+情绪热 = +1.73%/61%，幸存者偏差未解，仅模拟盘验证
+    'banlu_filters': {
+        'trigger_pct': 5.0,      # 触发涨幅 T（%），触发价 = round(昨收×(1+T%), 2)
+        'vr_min': 1.5,           # 预估全天量比下限（第一强过滤，缺此条期望归零）
+        'hot_limit_count': 50,   # 情绪热：当日全市场涨停家数下限
+        'exclude_st': True,
+        'exclude_bj': True,
+        'cutoff': '14:30',       # 此后停止接新单（尾盘胜率全场最低）
+    },
+
     # 日内累计成交量占全天的比例曲线，用于把「现在的推进率」折成「预估全天量比」。
     # 换成你自己券商的实测值会准很多。格式 [[时刻, 占比], ...]，按时刻升序。
     'intraday_share': [

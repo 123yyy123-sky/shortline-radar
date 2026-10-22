@@ -103,7 +103,8 @@ async function startScan() {
 
   try {
     const at = ($('#atInput').value || '').trim();
-    await api('/api/scan', { method: 'POST', body: at ? { at } : {} });
+    const mode = $('#modeSel').value || 'dban';
+    await api('/api/scan', { method: 'POST', body: { at: at || undefined, mode } });
     pollScan();
   } catch (e) {
     S.busy = false;
@@ -164,14 +165,22 @@ function pollScan() {
 
 function renderResult(r) {
   S.result = r;
-  renderFunnel(r.funnel, r.filters);
+  renderFunnel(r.funnel, r.filters, r.mode);
   renderGroups(r);
   renderWarns(r.warnings || []);
 }
 
-function renderFunnel(f, filters) {
+function renderFunnel(f, filters, mode) {
   const pct = (a, b) => b ? Math.round((a / b) * 100) + '%' : '';
-  const steps = [
+  const steps = (mode === 'banlu') ? [
+    ['全市场', f.total, '', ''],
+    ['20cm（创业/科创）', f.cm20 ?? 0, pct(f.cm20 ?? 0, f.total), ''],
+    ['开盘未越过触发价', f.open_ok ?? 0, pct(f.open_ok ?? 0, f.cm20 ?? 1), ''],
+    ['已触发（涨过 5%）', f.touched ?? 0, pct(f.touched ?? 0, f.open_ok ?? 1), ''],
+    [`量比≥${filters.vr_min ?? 1.5}`, f.vr_ok ?? 0, pct(f.vr_ok ?? 0, f.touched ?? 1), ''],
+    ['全条件通过', f.clean ?? 0, pct(f.clean ?? 0, f.vr_ok ?? 1), 'good'],
+    ['其中已封板', f.sealed ?? 0, '', 'hot'],
+  ] : [
     ['全市场', f.total, '', ''],
     [`涨幅≥${filters.min_gain_pct}%`, f.gain, pct(f.gain, f.total), ''],
     ['开盘进场区间', f.open_range, pct(f.open_range, f.gain), ''],
@@ -187,11 +196,17 @@ function renderFunnel(f, filters) {
     </div>`).join('');
 }
 
-const GROUPS = [
-  { key: 'pass', title: '可打', tip: '全条件通过且已封板 —— 挂涨停价排队，买不进就空仓' },
-  { key: 'watch', title: '盯住', tip: '条件都够但还没封 —— 封不上就不买，别抢跑' },
-  { key: 'reject', title: '剔除', tip: '差在哪一步，看最后一列' },
-];
+function groupTips(mode) {
+  return (mode === 'banlu') ? [
+    { key: 'pass', title: '已触发', tip: '现价已越过触发价且全条件通过 —— 触发价附近买，14:30 后不接' },
+    { key: 'watch', title: '盯住', tip: '条件都够但还没涨到 5% —— 触发了再买，别抢跑' },
+    { key: 'reject', title: '剔除', tip: '差在哪一步，看最后一列' },
+  ] : [
+    { key: 'pass', title: '可打', tip: '全条件通过且已封板 —— 挂涨停价排队，买不进就空仓' },
+    { key: 'watch', title: '盯住', tip: '条件都够但还没封 —— 封不上就不买，别抢跑' },
+    { key: 'reject', title: '剔除', tip: '差在哪一步，看最后一列' },
+  ];
+}
 
 function verdictTags(x) {
   // 剔除的票只说「差在哪一步」，不再重复列已经通过的条件，否则一屏全是标签
@@ -206,9 +221,22 @@ function vrClass(v) {
   return v < 1 ? 'vr-ok' : (v < 2 ? 'vr-warn' : 'vr-bad');
 }
 
-function rowHtml(x) {
+function rowHtml(x, mode) {
   const seal = x.seal_money ? Math.round(x.seal_money / 1e4).toLocaleString('zh-CN') : '—';
   // data-label 给窄屏用：手机上表格变卡片，靠它显示字段名
+  if (mode === 'banlu') {
+    return `<tr>
+    <td class="l code" data-label="代码">${esc(x.code)}</td>
+    <td class="l name" data-label="名称">${esc(x.name || '—')}</td>
+    <td data-label="涨幅">${signed(x.gain)}</td>
+    <td data-label="触发价">${num(x.trigger_price)}</td>
+    <td data-label="量比" class="${x.vr >= 1.5 ? 'vr-ok' : 'vr-bad'}">${num(x.vr)}</td>
+    <td data-label="距触发" class="${(x.to_trigger_pct ?? 9) <= 0 ? 'up' : ''}">${x.to_trigger_pct != null ? signed(x.to_trigger_pct) : '—'}</td>
+    <td data-label="连板">${esc(x.board_text || (x.boards ? x.boards + '板' : '—'))}</td>
+    <td class="dim" data-label="距涨停">${x.to_limit_pct != null ? num(x.to_limit_pct) + '%' : '—'}</td>
+    <td class="l" data-label="判定">${verdictTags(x)}</td>
+  </tr>`;
+  }
   return `<tr>
     <td class="l code" data-label="代码">${esc(x.code)}</td>
     <td class="l name" data-label="名称">${esc(x.name || '—')}</td>
@@ -225,19 +253,26 @@ function rowHtml(x) {
 
 function renderGroups(r) {
   const box = $('#groups');
+  const mode = r.mode;
+  const GROUPS = groupTips(mode);
   if (!r.rows || !r.rows.length) {
+    const why = (mode === 'banlu')
+      ? `没有 20cm 票同时满足「开盘未越过触发价 + 量比≥${esc(r.filters.vr_min ?? 1.5)} + 情绪热」，或者还没涨到 5%。`
+      : `说明今天这个时点全市场没有「涨幅 ≥${r.filters.min_gain_pct}%」的票，或者行情还没更新。`;
     box.innerHTML = `<div class="card prose"><h3>这一次没有票进入候选</h3>
-      <p>说明今天这个时点全市场没有「涨幅 ≥${r.filters.min_gain_pct}%」的票，
-      或者行情还没更新。这是正常的 —— <b>没票就空仓</b>，平均每天也就 2~3 个机会。</p>
+      <p>${why} 这是正常的 —— <b>没票就空仓</b>。</p>
       <p class="dim">当前时点 ${esc(r.at)} · ${esc(r.session_text)} · 快照 ${r.funnel.total} 只</p></div>`;
     return;
   }
 
   const LIMIT = 12;
+  const heads = (mode === 'banlu')
+    ? '<th>代码</th><th>名称</th><th>涨幅</th><th>触发价</th><th>量比</th><th>距触发</th><th>连板</th><th>距涨停</th><th class="l">判定</th>'
+    : '<th>代码</th><th>名称</th><th>涨幅</th><th>开盘</th><th>量比</th><th>首封</th><th>连板</th><th>封单/万</th><th>距涨停</th><th class="l">判定</th>';
   box.innerHTML = GROUPS.map((g) => {
     const list = r.rows.filter((x) => x.stage === g.key);
     if (!list.length) return '';
-    const rows = list.map(rowHtml).join('');
+    const rows = list.map((x) => rowHtml(x, mode)).join('');
     const more = list.length > LIMIT
       ? `<div class="pad dim" style="text-align:center"><button class="ghost sm" data-expand="${g.key}">展开其余 ${list.length - LIMIT} 只</button></div>`
       : '';
@@ -245,10 +280,7 @@ function renderGroups(r) {
       <h2 class="group-head">${g.title} <span class="n">${list.length} 只</span>
         <span class="tip">${esc(g.tip)}</span></h2>
       <div class="tw"><table>
-        <thead><tr>
-          <th>代码</th><th>名称</th><th>涨幅</th><th>开盘</th><th>量比</th>
-          <th>首封</th><th>连板</th><th>封单/万</th><th>距涨停</th><th class="l">判定</th>
-        </tr></thead>
+        <thead><tr>${heads}</tr></thead>
         <tbody>${rows}</tbody>
       </table></div>${more}</section>`;
   }).join('');
@@ -423,7 +455,15 @@ async function init() {
   setupAuto();
 
   $('#btnScan').onclick = startScan;
+  // 半路板模式下不开放筛选编辑（条件来自回测口径，五条件缺一不做）
+  $('#modeSel').onchange = () => {
+    const banlu = $('#modeSel').value === 'banlu';
+    $('#btnFilter').disabled = banlu;
+    $('#btnFilter').title = banlu ? '半路板条件来自回测口径，在 config.json 的 banlu_filters 里改' : '';
+    if (banlu) $('#filterBox').hidden = true;
+  };
   $('#btnFilter').onclick = () => {
+    if ($('#modeSel').value === 'banlu') { toast('半路板条件来自回测口径，在 config.json 的 banlu_filters 里改', 4000); return; }
     const box = $('#filterBox');
     box.hidden = !box.hidden;
   };

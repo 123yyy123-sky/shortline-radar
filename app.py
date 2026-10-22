@@ -147,12 +147,13 @@ def status_payload(cfg):
     return out
 
 
-def run_scan_async(cfg, at=None):
+def run_scan_async(cfg, at=None, mode='dban'):
     with LOCK:
         if STATE['running']:
             return False
         STATE.update(running=True, stage='start', done=0, total=1, msg='准备中',
                      result=None, error=None, finished_at=None,
+                     mode=mode,
                      started_at=datetime.now().strftime('%H:%M:%S'))
 
     def work():
@@ -160,13 +161,14 @@ def run_scan_async(cfg, at=None):
             def prog(stage, done, total, msg):
                 with LOCK:
                     STATE.update(stage=stage, done=done, total=total, msg=msg)
-            r = scan(cfg, at=at, progress=prog)
+            r = scan(cfg, at=at, progress=prog, mode=mode)
             with LOCK:
                 STATE['result'] = r
                 STATE['stage'] = 'done'
             # 有可打的票才推通知
             if any(x['stage'] == 'pass' for x in r['rows']):
-                notify.send(cfg, '短线雷达：发现可打标的', notify.scan_digest(r))
+                label = '半路板已触发' if mode == 'banlu' else '发现可打标的'
+                notify.send(cfg, f'短线雷达：{label}', notify.scan_digest(r))
         except Exception as e:
             with LOCK:
                 STATE['error'] = f'{type(e).__name__}: {e}'
@@ -314,7 +316,8 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if path == '/api/scan':
                 at = (b.get('at') or (ARGS.at if ARGS else None) or None)
-                started = run_scan_async(cfg, at=at)
+                mode = b.get('mode') if b.get('mode') in ('dban', 'banlu') else 'dban'
+                started = run_scan_async(cfg, at=at, mode=mode)
                 return self._json({'started': started, **scan_state()})
 
             if path == '/api/holdings':

@@ -31,6 +31,16 @@
     "require_sealed": false
   },
 
+  "_banlu_filters": "半路板模式（mode=banlu）的条件。来源：_bt_banluban.py 回测（20cm T=5% 首板+量比≥1.5+情绪热 = +1.73%/61%）。幸存者偏差未解，仅模拟盘验证",
+  "banlu_filters": {
+    "trigger_pct": 5.0,
+    "vr_min": 1.5,
+    "hot_limit_count": 50,
+    "exclude_st": true,
+    "exclude_bj": true,
+    "cutoff": "14:30"
+  },
+
   "_intraday_share": "日内累计成交量占全天的比例。换成你自己券商的实测值会准很多",
   "intraday_share": [
     ["09:31", 0.03],

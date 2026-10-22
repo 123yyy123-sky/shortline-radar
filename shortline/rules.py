@@ -185,3 +185,125 @@ def evaluate(raw, f):
         'is_st': is_st, 'is_bj': bj, 'limit_pct': lim,
         'flags': flags, 'rejects': rejects,
     }
+
+
+# ---------------------------------------------------------------- 半路板（2026-10-22 新增）
+
+# 回测来源：工作区 _bt_banluban.py（全A 5577 只，2016-10~2026-10，日线近似）。
+# 最优配置 20cm T=5% 首板+量比≥1.5+情绪热 = +1.73%/61.0%，2020~2026 每年为正。
+# ⚠️ 幸存者偏差未解（退市股不在回测库），数字只作方向性证据。
+BANLU_DEFAULTS = {
+    'trigger_pct': 5.0,        # T=5%，20cm 半板触发价 = round(昨收×1.05, 2)
+    'vr_min': 1.5,             # 预估全天量比下限（第一强过滤，缺此条期望归零）
+    'hot_limit_count': 50,     # 情绪热：当日全市场涨停家数 ≥ 50
+    'exclude_st': True,
+    'exclude_bj': True,
+    'cutoff': '14:30',         # 时点规矩：14:30 后停止接新单（尾盘胜率全场最低）
+}
+
+
+def banlu_trigger_price(prev_close, trigger_pct=5.0):
+    """半路板触发价 = round(昨收×(1+T), 2)，与回测口径逐分对齐。"""
+    if not prev_close:
+        return None
+    return round(float(prev_close) * (1 + trigger_pct / 100.0), 2)
+
+
+def evaluate_banlu(raw, f):
+    """半路板判定。raw 同 evaluate，另需 market_limit_count（全市场涨停家数）。
+
+    三档含义与打板模式不同：
+      pass  = 已触发（现价越过触发价）且全条件通过 → 现在就能按触发价附近买
+      watch = 条件都够但还没涨到 5% → 盯着，触发了再买
+      reject = 有硬伤 → 不碰
+    """
+    code = raw['code']
+    name = raw.get('name') or ''
+    prev = float(raw['prev_close'])
+    op = float(raw['open_price'])
+    last = float(raw['last_price'])
+    vol = float(raw['volume'])
+    v5 = float(raw['v5'])
+
+    gain = (last / prev - 1) * 100
+    progress = vol / v5 if v5 > 0 else 0.0
+    vr = progress / raw['share'] if raw['share'] > 0 else progress
+
+    lim = limit_pct(code, name)
+    up = limit_price(prev, code, name)
+    trig = banlu_trigger_price(prev, f['trigger_pct'])
+    touched = bool(trig and last >= trig)
+    open_ok = bool(trig and op < trig)          # 开盘未越过触发价（一字/跳空排除）
+
+    boards = raw.get('boards')
+    is_st = bool(raw.get('is_st')) or ('ST' in name.upper())
+    bj = is_bj(code)
+    mkt = int(raw.get('market_limit_count') or 0)
+
+    flags, rejects = [], []
+
+    # —— 只做 20cm（创业板 / 科创板）
+    if f.get('exclude_bj') and bj:
+        flags.append({'level': 'bad', 'text': '北交所'})
+        rejects.append('北交所')
+    elif lim != 0.20:
+        flags.append({'level': 'bad', 'text': f'{int(lim * 100)}cm 板，半路板只做 20cm'})
+        rejects.append(f'{int(lim * 100)}cm 板，只做 20cm')
+    # —— ST
+    if is_st and f.get('exclude_st'):
+        flags.append({'level': 'bad', 'text': 'ST'})
+        rejects.append('ST 股')
+    # —— 开盘未越过触发价
+    if open_ok:
+        flags.append({'level': 'ok', 'text': f'开盘未越过触发价 {trig:.2f}'})
+    else:
+        flags.append({'level': 'bad', 'text': f'开盘已越过触发价 {trig:.2f}（跳空/一字）'})
+        rejects.append('开盘已越过触发价（跳空/一字）')
+    # —— 量比 ≥ vr_min
+    if vr >= f['vr_min']:
+        flags.append({'level': 'ok', 'text': f'量比 {vr:.2f} ≥{f["vr_min"]:g}'})
+    else:
+        flags.append({'level': 'bad', 'text': f'量比 {vr:.2f} <{f["vr_min"]:g}，第一强过滤不过'})
+        rejects.append(f'量比 {vr:.2f} 低于 {f["vr_min"]:g}')
+    # —— 情绪热
+    if mkt >= f['hot_limit_count']:
+        flags.append({'level': 'ok', 'text': f'情绪热：全市场涨停 {mkt} 家'})
+    else:
+        flags.append({'level': 'bad', 'text': f'情绪冷：全市场涨停仅 {mkt} 家（<{f["hot_limit_count"]})'})
+        rejects.append(f'情绪冷：涨停 {mkt} <{f["hot_limit_count"]} 家')
+    # —— 连板（涨停池里标了 2 板以上 → 不是首板；昨日是否涨停拿不到，收盘人工复核）
+    if boards is not None and boards > 1:
+        flags.append({'level': 'bad', 'text': f'{boards} 连板，非首板'})
+        rejects.append(f'{boards} 连板，非首板')
+    else:
+        flags.append({'level': 'warn', 'text': '首板按涨停池尽力判定，昨日板收盘人工核'})
+
+    if rejects:
+        stage = REJECT
+    elif touched:
+        stage = PASS
+        flags.insert(0, {'level': 'ok', 'text': f'已触发（现价 ≥ {trig:.2f}）'})
+    else:
+        stage = WATCH
+        flags.insert(0, {'level': 'warn', 'text': f'未触发（距触发价 {trig:.2f} 还差 '
+                                                  f'{(trig / last - 1) * 100:.2f}%）'})
+
+    return {
+        'code': code, 'name': name,
+        'gain': round(gain, 2),
+        'vr': round(vr, 2), 'progress': round(progress, 2),
+        'last': last, 'prev_close': prev,
+        'limit_price': up, 'trigger_price': trig,
+        'to_trigger_pct': round((trig / last - 1) * 100, 2) if trig and last else None,
+        'to_limit_pct': round((up / last - 1) * 100, 2) if up and last else None,
+        'touched': touched, 'sealed': bool(up and abs(last - up) <= 0.011 and gain >= lim * 100 - 0.5),
+        'stage': stage,
+        'boards': boards, 'board_text': raw.get('board_text') or '',
+        'seal_time': raw.get('seal_time') or '',
+        'seal_money': raw.get('seal_money'),
+        'reason': raw.get('reason') or '',
+        'is_st': is_st, 'is_bj': bj, 'limit_pct': lim,
+        'market_limit_count': mkt,
+        'open_gain': round((op / prev - 1) * 100, 2),
+        'flags': flags, 'rejects': rejects,
+    }

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """命令行模式。给定时任务 / 脚本调用，或者不想开界面的时候用。
 
-  python -m shortline.cli scan              按当前时间扫一次
+  python -m shortline.cli scan              按当前时间扫一次（打板模式）
   python -m shortline.cli scan --at 10:15   指定时点（回放）
+  python -m shortline.cli scan --mode banlu 半路板模式（20cm 触及 5% + 量比≥1.5 + 情绪热）
   python -m shortline.cli scan --json       输出 JSON，方便管道处理
   python -m shortline.cli sell              今天要卖的票和挂单价
   python -m shortline.cli status            环境自检
@@ -25,7 +26,7 @@ def cmd_scan(cfg, args):
             sys.stderr.write(f'\r  {msg}          ')
             sys.stderr.flush()
 
-    r = scan(cfg, at=args.at, progress=prog)
+    r = scan(cfg, at=args.at, progress=prog, mode=getattr(args, 'mode', None) or 'dban')
     if not args.quiet:
         sys.stderr.write('\r' + ' ' * 60 + '\r')
         sys.stderr.flush()
@@ -46,11 +47,17 @@ def cmd_scan(cfg, args):
     if args.json:
         print(json.dumps(r, ensure_ascii=False, indent=2))
     else:
-        print(f"# 短线雷达 · {r['generated_at']} · 时点 {r['at']} · {r['session_text']}")
+        print(f"# 短线雷达 · {r['generated_at']} · 时点 {r['at']} · {r['session_text']}"
+              f" · 模式 {'半路板' if r.get('mode') == 'banlu' else '打板'}")
         print()
         f = r['funnel']
-        print(f"全市场 {f['total']} → 涨幅达标 {f['gain']} → 开盘达标 {f['open_range']}"
-              f" → 量比达标 {f['vr_ok']} → 全条件 {f['clean']} → 已封板 {f['sealed']}")
+        if r.get('mode') == 'banlu':
+            print(f"全市场 {f['total']} → 20cm {f.get('cm20', 0)} → 开盘未越过触发价 {f.get('open_ok', 0)}"
+                  f" → 已触发 {f.get('touched', 0)} → 量比达标 {f.get('vr_ok', 0)}"
+                  f" → 全条件 {f.get('clean', 0)} → 其中已封板 {f.get('sealed', 0)}")
+        else:
+            print(f"全市场 {f['total']} → 涨幅达标 {f['gain']} → 开盘达标 {f['open_range']}"
+                  f" → 量比达标 {f['vr_ok']} → 全条件 {f['clean']} → 已封板 {f['sealed']}")
         print()
         for w in r['warnings']:
             print(f'> ⚠ {w}')
@@ -62,12 +69,22 @@ def cmd_scan(cfg, args):
             print('**这次没有符合条件。** 空仓，等下一个。')
         else:
             for x in rows:
-                tag = '✅ 可打' if x['stage'] == 'pass' else '👀 盯住'
-                print(f"{tag} {x['code']} {x['name']}  涨{x['gain']:+.2f}% "
-                      f"开{x['open_gain']:+.2f}% 量比{x['vr']:.2f}"
-                      + (f" 首封{x['seal_time']}" if x['seal_time'] else ''))
+                if r.get('mode') == 'banlu':
+                    tag = '✅ 已触发' if x['stage'] == 'pass' else '👀 盯住'
+                    print(f"{tag} {x['code']} {x['name']}  涨{x['gain']:+.2f}% "
+                          f"触发价{x['trigger_price']:.2f} 量比{x['vr']:.2f}"
+                          + (f" 距触发{x['to_trigger_pct']:+.2f}%" if x.get('to_trigger_pct') is not None else ''))
+                else:
+                    tag = '✅ 可打' if x['stage'] == 'pass' else '👀 盯住'
+                    print(f"{tag} {x['code']} {x['name']}  涨{x['gain']:+.2f}% "
+                          f"开{x['open_gain']:+.2f}% 量比{x['vr']:.2f}"
+                          + (f" 首封{x['seal_time']}" if x['seal_time'] else ''))
             print()
-            if any(x['stage'] == 'pass' for x in rows):
+            if r.get('mode') == 'banlu':
+                if any(x['stage'] == 'pass' for x in rows):
+                    print('> 触发价附近买。当日封板→次日开盘卖；未封→当日收盘卖；跌回触发价→次日开盘清仓。')
+                print('> 14:30 后不接新单。20cm 攒够 20 笔模拟样本前不上真仓。')
+            elif any(x['stage'] == 'pass' for x in rows):
                 print('> 挂涨停价排队，买不进就空仓。T+1 早上集合竞价挂跌停价清光。')
     return 1 if any(x['stage'] == 'pass' for x in r['rows']) else 0
 
@@ -125,6 +142,8 @@ def main():
 
     s = sub.add_parser('scan', help='扫一次')
     s.add_argument('--at', help='HH:MM，默认当前时间')
+    s.add_argument('--mode', choices=['dban', 'banlu'], default='dban',
+                   help='dban=打板（默认），banlu=半路板')
     s.add_argument('--json', action='store_true')
     s.add_argument('--quiet', action='store_true', help='不显示进度')
     s.add_argument('--codes', action='store_true',

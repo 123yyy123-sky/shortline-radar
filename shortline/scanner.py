@@ -10,7 +10,8 @@ from datetime import datetime, date
 
 from .config import ROOT
 from .datasource import get_source
-from .rules import ShareCurve, evaluate, PASS, WATCH, REJECT
+from .rules import (ShareCurve, evaluate, evaluate_banlu, banlu_trigger_price,
+                    limit_price, limit_pct, is_bj, BANLU_DEFAULTS, PASS, WATCH, REJECT)
 
 DATA = os.path.join(ROOT, 'data')
 
@@ -86,14 +87,22 @@ def bench_age_note(bench):
 
 # ---------------------------------------------------------------- 扫描
 
-def scan(cfg, at=None, progress=None):
+def scan(cfg, at=None, progress=None, mode='dban'):
     """跑一次完整扫描。
+
+    mode='dban'  打板模式（默认）：缩量+开盘3~9%+首板，等封板。
+    mode='banlu' 半路板模式：20cm 触及 5% + 量比≥1.5 + 情绪热，触价即买。
 
     progress(stage, done, total, msg) —— stage 是 'snapshot' 这种短标识，
     前端用它显示进度条。可以为 None。
     """
     t0 = time.time()
-    f = cfg['filters']
+    banlu = (mode == 'banlu')
+    f = (cfg.get('banlu_filters') if banlu else cfg['filters']) or {}
+    if banlu:
+        merged = dict(BANLU_DEFAULTS)
+        merged.update({k: v for k, v in f.items() if v is not None})
+        f = merged
     curve = ShareCurve(cfg.get('intraday_share') or [['15:00', 1.0]])
 
     now = datetime.now()
@@ -134,59 +143,130 @@ def scan(cfg, at=None, progress=None):
 
     # 4) 逐只判定
     report('evaluate', 0, len(snaps), '逐只判定')
-    rows, funnel = [], {
-        'total': len(snaps), 'has_bench': 0, 'gain': 0,
-        'open_range': 0, 'vr_ok': 0, 'clean': 0, 'sealed': 0,
-    }
-    zero_volume = 0
 
-    for i, s in enumerate(snaps):
-        if i % 500 == 0:
-            report('evaluate', i, len(snaps), f'判定 {i}/{len(snaps)}')
+    if banlu:
+        # 情绪热需要「全市场涨停家数」——先快速数一遍
+        market_limit_count = 0
+        for s in snaps:
+            code = s.get('thscode')
+            prev, last = s.get('prev_price'), s.get('last_price')
+            if not (code and prev and last):
+                continue
+            up = limit_price(prev, code)
+            if up and abs(last - up) <= 0.011 and (last / prev - 1) * 100 >= limit_pct(code) * 100 - 0.5:
+                market_limit_count += 1
+        report('evaluate', 0, len(snaps), f'全市场涨停 {market_limit_count} 家，逐只判定')
 
-        code = s.get('thscode')
-        b = bmap.get(code)
-        prev = s.get('prev_price')
-        op, last, vol = s.get('open_price'), s.get('last_price'), s.get('volume')
-        if not (code and b and prev and op and last and vol is not None):
-            continue
-        if vol == 0:
-            zero_volume += 1
-        funnel['has_bench'] += 1
-
-        p = pool.get(code) or {}
-        raw = {
-            'code': code,
-            'name': p.get('name') or symbols.get(code) or '',
-            'prev_close': prev, 'open_price': op, 'last_price': last,
-            'volume': vol, 'v5': b[0], 'share': share,
-            'boards': p.get('continue_day_cnt'),
-            'board_text': p.get('continue_day_text') or '',
-            'seal_time': p.get('limit_up_time') or '',
-            'seal_money': p.get('seal_money'),
-            'reason': p.get('limit_up_reason') or '',
-            'is_st': p.get('is_st'),
+        rows, funnel = [], {
+            'total': len(snaps), 'has_bench': 0, 'cm20': 0,
+            'open_ok': 0, 'touched': 0, 'vr_ok': 0, 'clean': 0, 'sealed': 0,
         }
-        r = evaluate(raw, f)
+        zero_volume = 0
 
-        # 漏斗：每一道剩多少
-        if r['gain'] >= f['min_gain_pct']:
-            funnel['gain'] += 1
-            in_open = f['open_gain_min_pct'] <= r['open_gain'] < f['open_gain_max_pct']
-            if in_open:
-                funnel['open_range'] += 1
-                if r['vr'] < f['vr_max']:
-                    funnel['vr_ok'] += 1
-                    if not (r['boards'] and r['boards'] > f['max_boards']) \
-                            and not (r['is_st'] and f['exclude_st']) \
-                            and not (r['is_bj'] and f['exclude_bj']):
-                        funnel['clean'] += 1
-                        if r['sealed']:
-                            funnel['sealed'] += 1
-            # 涨幅达标的都进表，方便看「差在哪一步」
-            rows.append(r)
-        elif r['sealed'] and f.get('show_sealed_below_gain'):
-            rows.append(r)
+        for i, s in enumerate(snaps):
+            if i % 500 == 0:
+                report('evaluate', i, len(snaps), f'判定 {i}/{len(snaps)}')
+            code = s.get('thscode')
+            b = bmap.get(code)
+            prev = s.get('prev_price')
+            op, last, vol = s.get('open_price'), s.get('last_price'), s.get('volume')
+            if not (code and b and prev and op and last and vol is not None):
+                continue
+            if vol == 0:
+                zero_volume += 1
+            funnel['has_bench'] += 1
+
+            if limit_pct(code) != 0.20 or is_bj(code):
+                continue
+            funnel['cm20'] += 1
+
+            p = pool.get(code) or {}
+            raw = {
+                'code': code,
+                'name': p.get('name') or symbols.get(code) or '',
+                'prev_close': prev, 'open_price': op, 'last_price': last,
+                'volume': vol, 'v5': b[0], 'share': share,
+                'boards': p.get('continue_day_cnt'),
+                'board_text': p.get('continue_day_text') or '',
+                'seal_time': p.get('limit_up_time') or '',
+                'seal_money': p.get('seal_money'),
+                'reason': p.get('limit_up_reason') or '',
+                'is_st': p.get('is_st'),
+                'market_limit_count': market_limit_count,
+            }
+            r = evaluate_banlu(raw, f)
+
+            trig = banlu_trigger_price(prev, f['trigger_pct'])
+            open_ok = bool(trig and op < trig)
+            if open_ok:
+                funnel['open_ok'] += 1
+                if r['touched']:
+                    funnel['touched'] += 1
+                    if r['vr'] >= f['vr_min']:
+                        funnel['vr_ok'] += 1
+                        mkt_ok = (raw['market_limit_count'] or 0) >= f['hot_limit_count']
+                        not_lianban = not (r['boards'] and r['boards'] > 1)
+                        if mkt_ok and not_lianban:
+                            funnel['clean'] += 1
+                            if r['sealed']:
+                                funnel['sealed'] += 1
+            # 只留：已触发/盯得住的 + 触发了但有硬伤的（看清差哪步）
+            if r['stage'] != REJECT or r['touched']:
+                rows.append(r)
+    else:
+        rows, funnel = [], {
+            'total': len(snaps), 'has_bench': 0, 'gain': 0,
+            'open_range': 0, 'vr_ok': 0, 'clean': 0, 'sealed': 0,
+        }
+        zero_volume = 0
+
+        for i, s in enumerate(snaps):
+            if i % 500 == 0:
+                report('evaluate', i, len(snaps), f'判定 {i}/{len(snaps)}')
+
+            code = s.get('thscode')
+            b = bmap.get(code)
+            prev = s.get('prev_price')
+            op, last, vol = s.get('open_price'), s.get('last_price'), s.get('volume')
+            if not (code and b and prev and op and last and vol is not None):
+                continue
+            if vol == 0:
+                zero_volume += 1
+            funnel['has_bench'] += 1
+
+            p = pool.get(code) or {}
+            raw = {
+                'code': code,
+                'name': p.get('name') or symbols.get(code) or '',
+                'prev_close': prev, 'open_price': op, 'last_price': last,
+                'volume': vol, 'v5': b[0], 'share': share,
+                'boards': p.get('continue_day_cnt'),
+                'board_text': p.get('continue_day_text') or '',
+                'seal_time': p.get('limit_up_time') or '',
+                'seal_money': p.get('seal_money'),
+                'reason': p.get('limit_up_reason') or '',
+                'is_st': p.get('is_st'),
+            }
+            r = evaluate(raw, f)
+
+            # 漏斗：每一道剩多少
+            if r['gain'] >= f['min_gain_pct']:
+                funnel['gain'] += 1
+                in_open = f['open_gain_min_pct'] <= r['open_gain'] < f['open_gain_max_pct']
+                if in_open:
+                    funnel['open_range'] += 1
+                    if r['vr'] < f['vr_max']:
+                        funnel['vr_ok'] += 1
+                        if not (r['boards'] and r['boards'] > f['max_boards']) \
+                                and not (r['is_st'] and f['exclude_st']) \
+                                and not (r['is_bj'] and f['exclude_bj']):
+                            funnel['clean'] += 1
+                            if r['sealed']:
+                                funnel['sealed'] += 1
+                # 涨幅达标的都进表，方便看「差在哪一步」
+                rows.append(r)
+            elif r['sealed'] and f.get('show_sealed_below_gain'):
+                rows.append(r)
 
     zero_volume_ratio = zero_volume / max(funnel['has_bench'], 1)
 
@@ -208,6 +288,15 @@ def scan(cfg, at=None, progress=None):
         warnings.append(f'{zero_volume_ratio:.0%} 的票成交量为 0，行情可能还没更新或今天休市。')
     if src.name == 'demo':
         warnings.append('当前是演示数据，不是真实行情。改 config.json 的 data_source 接真实源。')
+    if banlu:
+        if hhmm > f['cutoff']:
+            warnings.append(f'已过 {f["cutoff"]}，半路板停止接新单（尾盘胜率全场最低）。')
+        if len(rows) > 200:
+            warnings.append(f'候选 {len(rows)} 只偏多，表格只显示前 200 只，先看「可买」。')
+        rows = rows[:200]
+        if (funnel.get('clean') or 0) == 0 and market_limit_count < f['hot_limit_count']:
+            warnings.append(f'今天情绪冷（全市场涨停 {market_limit_count} <{f["hot_limit_count"]} 家），'
+                            f'回测口径里这天不做半路板。')
 
     ok, src_note = src.health()
     if not ok:
@@ -217,6 +306,7 @@ def scan(cfg, at=None, progress=None):
 
     return {
         'ok': True,
+        'mode': mode,
         'generated_at': now.strftime('%Y-%m-%d %H:%M:%S'),
         'at': hhmm,
         'session': sess,

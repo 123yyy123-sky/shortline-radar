@@ -12,5 +12,5 @@
   notify      可选的通知推送
 """
 
-__version__ = '1.0.6'
+__version__ = '1.0.7'
 __all__ = ['config', 'rules', 'datasource', 'scanner', 'holdings', 'notify']
