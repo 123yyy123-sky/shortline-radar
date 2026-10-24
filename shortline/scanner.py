@@ -90,8 +90,9 @@ def bench_age_note(bench):
 def scan(cfg, at=None, progress=None, mode='dban'):
     """跑一次完整扫描。
 
-    mode='dban'  打板模式（默认）：缩量+开盘3~9%+首板，等封板。
-    mode='banlu' 半路板模式：20cm 触及 5% + 量比≥1.5 + 情绪热，触价即买。
+    mode='dban'  打板模式（默认）：真源 §6.5 —— 首板 / 开盘 1~3% / 价格≥20 / 20cm 优先，等封板。
+                 ⚠️ 打板只到打平（−0.682% → +0.020%），这组条件是压炸板率，不构成开仓理由。
+    mode='banlu' 半路板模式：真源 §6.4 —— 20cm 触及 5% + 开盘涨幅 >2% + 首板，触价即买，次日收盘卖。
 
     progress(stage, done, total, msg) —— stage 是 'snapshot' 这种短标识，
     前端用它显示进度条。可以为 None。
@@ -159,7 +160,7 @@ def scan(cfg, at=None, progress=None, mode='dban'):
 
         rows, funnel = [], {
             'total': len(snaps), 'has_bench': 0, 'cm20': 0,
-            'open_ok': 0, 'touched': 0, 'vr_ok': 0, 'clean': 0, 'sealed': 0,
+            'open_ok': 0, 'touched': 0, 'gap_ok': 0, 'clean': 0, 'sealed': 0,
         }
         zero_volume = 0
 
@@ -202,11 +203,10 @@ def scan(cfg, at=None, progress=None, mode='dban'):
                 funnel['open_ok'] += 1
                 if r['touched']:
                     funnel['touched'] += 1
-                    if r['vr'] >= f['vr_min']:
-                        funnel['vr_ok'] += 1
-                        mkt_ok = (raw['market_limit_count'] or 0) >= f['hot_limit_count']
+                    if r['open_gap'] > (f.get('min_open_gap_pct') or 0):
+                        funnel['gap_ok'] += 1
                         not_lianban = not (r['boards'] and r['boards'] > 1)
-                        if mkt_ok and not_lianban:
+                        if not_lianban:
                             funnel['clean'] += 1
                             if r['sealed']:
                                 funnel['sealed'] += 1
@@ -216,7 +216,7 @@ def scan(cfg, at=None, progress=None, mode='dban'):
     else:
         rows, funnel = [], {
             'total': len(snaps), 'has_bench': 0, 'gain': 0,
-            'open_range': 0, 'vr_ok': 0, 'clean': 0, 'sealed': 0,
+            'open_range': 0, 'price_ok': 0, 'clean': 0, 'sealed': 0,
         }
         zero_volume = 0
 
@@ -255,8 +255,8 @@ def scan(cfg, at=None, progress=None, mode='dban'):
                 in_open = f['open_gain_min_pct'] <= r['open_gain'] < f['open_gain_max_pct']
                 if in_open:
                     funnel['open_range'] += 1
-                    if r['vr'] < f['vr_max']:
-                        funnel['vr_ok'] += 1
+                    if not f.get('min_price') or r['price'] >= f['min_price']:
+                        funnel['price_ok'] += 1
                         if not (r['boards'] and r['boards'] > f['max_boards']) \
                                 and not (r['is_st'] and f['exclude_st']) \
                                 and not (r['is_bj'] and f['exclude_bj']):
@@ -294,9 +294,12 @@ def scan(cfg, at=None, progress=None, mode='dban'):
         if len(rows) > 200:
             warnings.append(f'候选 {len(rows)} 只偏多，表格只显示前 200 只，先看「可买」。')
         rows = rows[:200]
-        if (funnel.get('clean') or 0) == 0 and market_limit_count < f['hot_limit_count']:
-            warnings.append(f'今天情绪冷（全市场涨停 {market_limit_count} <{f["hot_limit_count"]} 家），'
-                            f'回测口径里这天不做半路板。')
+        if market_limit_count < 30:
+            warnings.append(f'全市场涨停 {market_limit_count} 家，情绪偏冷。'
+                            f'情绪只作观察指标（真源 §6.4 已删阈值），不构成开关。')
+    else:
+        warnings.append('打板在日线上只到打平（全部触板 −0.682%，四项叠加 +0.020%，扣费 −0.13%）。'
+                        '这组条件的作用是压炸板率，不构成开仓理由。真源 §6.5。')
 
     ok, src_note = src.health()
     if not ok:

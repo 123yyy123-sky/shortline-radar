@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-rem Stop Shortline Radar: kill whatever is listening on the port.
+rem Stop Trading Desk: kill whatever is listening on the port.
 rem Kept ASCII-only on purpose - cmd.exe parses .bat in the system codepage.
 rem
 rem Usage: stop.bat [port]      (default port 8848)
@@ -18,12 +18,12 @@ for /f "tokens=5" %%P in ('netstat -ano -p TCP ^| findstr /i /c:"LISTENING" ^| f
 )
 
 if not defined FOUND (
-    echo Shortline Radar is not running on port %PORT%.
+    echo Trading Desk is not running on port %PORT%.
     "%WAIT%" /t 3 >nul
     exit /b 0
 )
 
-echo Stopping Shortline Radar ^(PID %FOUND%, port %PORT%^) ...
+echo Stopping Trading Desk ^(PID %FOUND%, port %PORT%^) ...
 taskkill /F /PID %FOUND% >nul 2>nul
 if errorlevel 1 (
     echo Failed to stop PID %FOUND%.

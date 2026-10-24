@@ -343,3 +343,92 @@ tbody td.l { text-align: left; }
   .group-head .tip { flex-basis: 100%; }
 }
 
+
+/* ---------------------------------------------------------------- R3 卫星轮动 */
+
+.r3bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 12.5px;
+  color: var(--tx2);
+}
+.chip i { font-style: normal; font-size: 11px; color: var(--tx3); }
+.chip b { font: 13px var(--mono); color: var(--tx); }
+
+.toolbar.tight { padding: 0 0 12px; }
+.toolbar .grow { flex: 1; }
+
+#r3Action .big {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--tx);
+  line-height: 1.5;
+}
+.r3-alert {
+  margin: 0 16px 10px;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 77, 79, .35);
+  border-radius: 8px;
+  background: rgba(255, 77, 79, .07);
+  color: var(--up);
+  font-size: 13px;
+}
+#r3Alerts { padding-bottom: 6px; }
+
+td.hl { color: var(--tx); font-weight: 600; }
+tr.badrow td { background: rgba(255, 77, 79, .06); }
+#pane-r3 table { min-width: 720px; }
+#pane-r3 .hint { line-height: 1.7; }
+
+/* 止损价用警示色，不要用涨跌色（止损是防线，不是涨跌方向） */
+td.stopc { color: var(--warn); font-weight: 600; }
+
+/* ---------------------------------------------------------------- 交易台：副标题与三价台账 */
+
+.tagline {
+  font-size: 11.5px; color: var(--tx3); letter-spacing: .5px;
+  border-left: 1px solid var(--line2); padding-left: 10px;
+}
+@media (max-width: 720px) { .tagline { display: none; } }
+
+#pane-r3 table, #pane-bline table { min-width: 920px; }
+
+/* 点格子就能改，手感对齐行情软件：悬停描边、编辑时蓝框、改过的标蓝点 */
+td.ed {
+  cursor: pointer; position: relative;
+  font: 12.5px var(--mono); white-space: nowrap;
+}
+td.ed:hover { background: rgba(76,141,255,.10); box-shadow: inset 0 0 0 1px rgba(76,141,255,.45); }
+td.ed .pen {
+  font-style: normal; font-size: 9px; color: var(--acc);
+  opacity: 0; margin-left: 3px; vertical-align: 1px;
+}
+td.ed:hover .pen { opacity: .85; }
+td.ed.custom { color: var(--acc); font-weight: 600; }
+td.ed.custom::before {
+  content: '•'; font-size: 10px; color: var(--acc); margin-right: 3px;
+}
+td.ed input.cellin {
+  width: 76px; font: 12.5px var(--mono); text-align: right;
+  color: var(--tx); background: var(--panel2);
+  border: 1px solid var(--acc); border-radius: 4px;
+  padding: 1px 4px; outline: none;
+}
+#blAction .big, #r3Action .big { font-size: 17px; font-weight: 600; color: var(--tx); line-height: 1.5; }
+
+/* 名单编辑：出池按钮用警示色，只读行不换行 */
+.nowrap { white-space: nowrap; }
+td.nowrap { text-align: right; }
+.btn-x.danger { color: var(--bad); border-color: rgba(255, 77, 79, .45); }
+.chip button.btn-x { margin-left: 5px; padding: 0 5px; font-size: 11px; line-height: 16px; }

@@ -3,7 +3,7 @@
 
   python -m shortline.cli scan              按当前时间扫一次（打板模式）
   python -m shortline.cli scan --at 10:15   指定时点（回放）
-  python -m shortline.cli scan --mode banlu 半路板模式（20cm 触及 5% + 量比≥1.5 + 情绪热）
+  python -m shortline.cli scan --mode banlu 半路板模式（20cm 触及 5% + 高开>2% + 首板，次日收盘卖）
   python -m shortline.cli scan --json       输出 JSON，方便管道处理
   python -m shortline.cli sell              今天要卖的票和挂单价
   python -m shortline.cli status            环境自检

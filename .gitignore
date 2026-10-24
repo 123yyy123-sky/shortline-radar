@@ -7,6 +7,14 @@ vendor/
 
 # 个人持仓
 data/holdings.json
+# 个人台账（三价 / B线路已买入 / R3 排除 / 推送去重状态，都含真实成本）
+data/levels.json
+data/bline_positions.json
+data/r3_exclude.json
+data/r3_push_state.json
+
+# 本地备份与验证截图
+_backups/
 
 # 收盘归档（数据会越长越大）
 data/shortline_archive/

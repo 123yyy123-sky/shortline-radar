@@ -3,11 +3,14 @@
 
 这里只有规则，不碰数据源，也不碰界面。改规则只改这一个文件。
 
-三条规则来源（详见 docs/STRATEGY.md）：
+三条规则来源（详见 docs/STRATEGY.md 与知识库 [[短线交易系统]]）：
   1. 涨停幅度按板块分档，ST 单独处理
   2. 量比 = 当日累计量 / 前 5 日均量。盘中拿不到「全天量比」，
-     要用日内成交量占比曲线把当前推进率折成全天口径
-  3. 开仓条件：涨幅 ≥7% + 开盘涨 3~9% + 全天量比 <1 + 首板 + 非 ST + 非北交所
+     要用日内成交量占比曲线把当前推进率折成全天口径。
+     ⚠️ 2026-10-24 起量比**不再作判据**（未来函数式口径，新回测未复现），只作展示
+  3. 开仓条件（真源 §6.5）：首板 + 开盘 1~3% + 昨日量比<1 + 价格≥20 + 20cm 优先。
+     程序只能算「首板 / 开盘幅度 / 价格 / 板型」，昨日量比靠人工核。
+     ⚠️ 打板只到打平（−0.682% → +0.020%），这组条件压炸板率，不构成开仓理由
 """
 from bisect import bisect_left
 
@@ -137,15 +140,29 @@ def evaluate(raw, f):
         rejects.append(f'开盘只涨 {open_gain:.2f}%，低于 {f["open_gain_min_pct"]:g}%')
     elif open_gain >= f['open_gain_max_pct']:
         rejects.append(f'开盘涨 {open_gain:.2f}%，跳空太贵（≥{f["open_gain_max_pct"]:g}%）')
-    # —— 量比
-    if vr >= 2.0:
-        flags.append({'level': 'bad', 'text': f'量比 {vr:.2f} ≥2，历史期望为负'})
-        rejects.append(f'量比 {vr:.2f} ≥2')
-    elif vr >= f['vr_max']:
-        flags.append({'level': 'warn', 'text': f'量比 {vr:.2f} ≥{f["vr_max"]:g}'})
-        rejects.append(f'量比 {vr:.2f} 高于 {f["vr_max"]:g}')
+    # —— 量比（2026-10-24 起只作参考。全天量比口径与真源 §6.5 的「昨日量比」不是同一个数，
+    #    旧「量比<1 → +2.33%」结论在新口径未复现，故不作否决）
+    vr_max = f.get('vr_max')
+    if vr_max is None:
+        flags.append({'level': 'ok' if vr < 2 else 'warn',
+                      'text': f'量比 {vr:.2f}（仅参考，不作判据）'})
+    elif vr >= vr_max:
+        flags.append({'level': 'warn', 'text': f'量比 {vr:.2f} ≥{vr_max:g}'})
+        rejects.append(f'量比 {vr:.2f} 高于 {vr_max:g}')
     else:
-        flags.append({'level': 'ok', 'text': f'量比 {vr:.2f} <{f["vr_max"]:g}'})
+        flags.append({'level': 'ok', 'text': f'量比 {vr:.2f} <{vr_max:g}'})
+    # —— 价格 ≥ min_price（§6.5 条件④）
+    min_price = f.get('min_price')
+    if min_price:
+        if prev < min_price:
+            flags.append({'level': 'bad', 'text': f'价格 {prev:.2f} <{min_price:g} 元'})
+            rejects.append(f'价格 {prev:.2f} 低于 {min_price:g} 元')
+        else:
+            flags.append({'level': 'ok', 'text': f'价格 {prev:.2f} ≥{min_price:g} 元'})
+    # —— 板型（§6.5 条件⑤：20cm 炸板率 30.4%，10cm 35.4%。只打标，不否决）
+    if f.get('prefer_20cm') and lim != 0.20:
+        flags.append({'level': 'warn',
+                      'text': f'{int(lim * 100)}cm，炸板率 35.4% 高于 20cm 的 30.4%'})
     # —— 连板
     if boards is not None and boards > f['max_boards']:
         flags.append({'level': 'bad', 'text': f'{boards} 连板'})
@@ -175,7 +192,7 @@ def evaluate(raw, f):
         'code': code, 'name': name,
         'gain': round(gain, 2), 'open_gain': round(open_gain, 2),
         'vr': round(vr, 2), 'progress': round(progress, 2),
-        'last': last, 'prev_close': prev, 'limit_price': up,
+        'last': last, 'prev_close': prev, 'price': round(prev, 2), 'limit_price': up,
         'to_limit_pct': round((up / last - 1) * 100, 2) if up and last else None,
         'sealed': sealed, 'stage': stage,
         'boards': boards, 'board_text': raw.get('board_text') or '',
@@ -189,13 +206,17 @@ def evaluate(raw, f):
 
 # ---------------------------------------------------------------- 半路板（2026-10-22 新增）
 
-# 回测来源：工作区 _bt_banluban.py（全A 5577 只，2016-10~2026-10，日线近似）。
-# 最优配置 20cm T=5% 首板+量比≥1.5+情绪热 = +1.73%/61.0%，2020~2026 每年为正。
-# ⚠️ 幸存者偏差未解（退市股不在回测库），数字只作方向性证据。
+# 回测来源：真源 [[短线交易系统]] §6.4（2026-10-24 复核后重写）
+#           + [[短线回测_11_打板前置条件与半路板可执行版]]。
+# 可执行口径：20cm、T=5%、开盘涨幅 >2%、首板、次一交易日收盘卖 =
+#   +1.381% / 胜率 50.1% / n=42,257，2020~2026 7/7 年正。
+# ⚠️ 原「量比≥1.5」「情绪热≥50」是未来函数（用收盘才知道的数），已删 —— 去掉后 +1.73% 掉到 +0.25%；
+#    原「未封板当日收盘卖」违反 T+1，已改次一交易日收盘卖。
+# ⚠️ 必须打折：2024 单年 +4.172%（贡献过半），剔除后 +0.587%，前 5 天占 70.4%。
+#    保守预期 +0.5~0.6% 毛、+0.35~0.45% 净。仅模拟盘或 ≤300 元验证。
 BANLU_DEFAULTS = {
     'trigger_pct': 5.0,        # T=5%，20cm 半板触发价 = round(昨收×1.05, 2)
-    'vr_min': 1.5,             # 预估全天量比下限（第一强过滤，缺此条期望归零）
-    'hot_limit_count': 50,     # 情绪热：当日全市场涨停家数 ≥ 50
+    'min_open_gap_pct': 2.0,   # §6.4 条件②：开盘涨幅 >2%（唯一有效的可执行过滤）
     'exclude_st': True,
     'exclude_bj': True,
     'cutoff': '14:30',         # 时点规矩：14:30 后停止接新单（尾盘胜率全场最低）
@@ -226,6 +247,7 @@ def evaluate_banlu(raw, f):
     v5 = float(raw['v5'])
 
     gain = (last / prev - 1) * 100
+    open_gain = (op / prev - 1) * 100
     progress = vol / v5 if v5 > 0 else 0.0
     vr = progress / raw['share'] if raw['share'] > 0 else progress
 
@@ -259,18 +281,20 @@ def evaluate_banlu(raw, f):
     else:
         flags.append({'level': 'bad', 'text': f'开盘已越过触发价 {trig:.2f}（跳空/一字）'})
         rejects.append('开盘已越过触发价（跳空/一字）')
-    # —— 量比 ≥ vr_min
-    if vr >= f['vr_min']:
-        flags.append({'level': 'ok', 'text': f'量比 {vr:.2f} ≥{f["vr_min"]:g}'})
-    else:
-        flags.append({'level': 'bad', 'text': f'量比 {vr:.2f} <{f["vr_min"]:g}，第一强过滤不过'})
-        rejects.append(f'量比 {vr:.2f} 低于 {f["vr_min"]:g}')
-    # —— 情绪热
-    if mkt >= f['hot_limit_count']:
-        flags.append({'level': 'ok', 'text': f'情绪热：全市场涨停 {mkt} 家'})
-    else:
-        flags.append({'level': 'bad', 'text': f'情绪冷：全市场涨停仅 {mkt} 家（<{f["hot_limit_count"]})'})
-        rejects.append(f'情绪冷：涨停 {mkt} <{f["hot_limit_count"]} 家')
+    # —— 开盘涨幅 > min_open_gap_pct（§6.4 条件②：唯一有效的可执行过滤，+0.364% → +1.381%）
+    min_gap = f.get('min_open_gap_pct')
+    if min_gap:
+        if open_gain > min_gap:
+            flags.append({'level': 'ok', 'text': f'高开 {open_gain:.2f}% >{min_gap:g}%'})
+        else:
+            flags.append({'level': 'bad', 'text': f'高开 {open_gain:.2f}% 不足 {min_gap:g}%'})
+            rejects.append(f'高开 {open_gain:.2f}% ≤{min_gap:g}%')
+    # —— 量比（只作参考：原「量比≥1.5」用全天成交量，是未来函数，真源 §6.4 已删）
+    flags.append({'level': 'ok' if vr >= 1.5 else 'warn',
+                  'text': f'量比 {vr:.2f}（仅参考，不作判据）'})
+    # —— 情绪（只作参考：原「情绪热≥50」用当日涨停家数，是未来函数，真源 §6.4 已删）
+    flags.append({'level': 'ok' if mkt >= 50 else 'warn',
+                  'text': f'全市场涨停 {mkt} 家（仅参考，不作判据）'})
     # —— 连板（涨停池里标了 2 板以上 → 不是首板；昨日是否涨停拿不到，收盘人工复核）
     if boards is not None and boards > 1:
         flags.append({'level': 'bad', 'text': f'{boards} 连板，非首板'})
@@ -292,7 +316,7 @@ def evaluate_banlu(raw, f):
         'code': code, 'name': name,
         'gain': round(gain, 2),
         'vr': round(vr, 2), 'progress': round(progress, 2),
-        'last': last, 'prev_close': prev,
+        'last': last, 'prev_close': prev, 'price': round(prev, 2),
         'limit_price': up, 'trigger_price': trig,
         'to_trigger_pct': round((trig / last - 1) * 100, 2) if trig and last else None,
         'to_limit_pct': round((up / last - 1) * 100, 2) if up and last else None,
@@ -304,6 +328,8 @@ def evaluate_banlu(raw, f):
         'reason': raw.get('reason') or '',
         'is_st': is_st, 'is_bj': bj, 'limit_pct': lim,
         'market_limit_count': mkt,
-        'open_gain': round((op / prev - 1) * 100, 2),
+        'open_gain': round(open_gain, 2),
+        'open_gap': round(open_gain, 2),
+        'exit_rule': '次一交易日收盘卖',
         'flags': flags, 'rejects': rejects,
     }

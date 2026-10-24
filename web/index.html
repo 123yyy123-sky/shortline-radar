@@ -3,16 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>短线雷达 · A股涨停扫描</title>
+<title>交易台 · 短线 / B线路 / R3</title>
 <link rel="stylesheet" href="style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📡</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎛</text></svg>">
 </head>
 <body>
 
 <header class="top">
   <div class="brand">
     <span class="pulse"></span>
-    <h1>短线雷达</h1>
+    <h1>交易台</h1>
+    <span class="tagline">短线 · B线路 · R3</span>
     <span class="ver" id="ver">v1.0</span>
   </div>
   <div class="meta">
@@ -57,7 +58,7 @@
 
 <section class="filters" id="filterBox" hidden>
   <div class="frow">
-    <label>量比上限<input id="f_vr" type="number" step="0.1" min="0.1" max="10"></label>
+    <label>价格下限 元<input id="f_price" type="number" step="1" min="0" max="500"></label>
     <label>涨幅下限 %<input id="f_gain" type="number" step="0.5" min="0" max="20"></label>
     <label>开盘涨幅下限 %<input id="f_ogmin" type="number" step="0.5" min="0" max="20"></label>
     <label>开盘涨幅上限 %<input id="f_ogmax" type="number" step="0.5" min="0" max="20"></label>
@@ -70,12 +71,14 @@
     <span class="grow"></span>
     <button id="btnSaveFilter" class="primary sm">保存并重扫</button>
   </div>
-  <p class="hint">默认值就是回测里跑出正期望的那一组。没看懂之前别动。</p>
+  <p class="hint">这组条件来自真源 §6.5，作用是<b>把炸板率从 35.0% 压到 30.6%</b>，不是赚钱门槛 —— 打板在日线上只到打平（+0.020%，扣费 −0.13%）。</p>
 </section>
 
 <nav class="tabs">
   <button class="tab on" data-tab="scan">扫描结果</button>
+  <button class="tab" data-tab="bline">B线路选股</button>
   <button class="tab" data-tab="hold">持仓卖出</button>
+  <button class="tab" data-tab="r3">R3卫星轮动</button>
   <button class="tab" data-tab="help">怎么看</button>
 </nav>
 
@@ -90,6 +93,95 @@
         <p>还没有扫过。</p>
         <p class="dim">点上面的「开始扫描」。盘中扫一次约 20 秒；演示数据是瞬时的。</p>
       </div>
+    </div>
+  </div>
+
+  <!-- B线路选股 -->
+  <div class="pane" id="pane-bline">
+    <div class="r3bar" id="blBar"><span class="dim">读取中…</span></div>
+
+    <div class="toolbar tight">
+      <button id="btnBlReload" class="primary sm">重新选股</button>
+      <label class="chk" title="盘中用实时价拼半根K；收盘后自动用收盘口径"><input type="checkbox" id="blLive"> 盘中口径</label>
+      <span class="grow"></span>
+      <span class="dim" id="blAt">—</span>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>今天能不能开仓</h3>
+        <span class="dim">先看大盘四档，再决定这一档能用什么条件</span>
+      </div>
+      <div id="blAction" class="pad">—</div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>focus 命中</h3>
+        <span class="dim" id="blFocusInfo">—</span>
+      </div>
+      <div id="blFocus"><p class="dim pad">—</p></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>B线路持仓</h3>
+        <span class="dim" id="blPosInfo">—</span>
+      </div>
+      <div id="blPos"><p class="dim pad">还没有 B线路 持仓。候选成交后在下面「记一笔买入」。</p></div>
+      <div class="frow pad">
+        <label>代码<input id="bl_code" placeholder="513120" size="10"></label>
+        <label>名称<input id="bl_name" placeholder="可留空" size="10"></label>
+        <label>份数<input id="bl_shares" type="number" step="100" min="100" size="8"></label>
+        <label>成交价<input id="bl_cost" type="number" step="0.001" min="0" size="8"></label>
+        <label>买入日<input id="bl_date" type="date"></label>
+        <button id="btnBlAdd" class="primary sm">记买入</button>
+        <button id="btnBlClear" class="ghost sm">清空</button>
+      </div>
+      <p class="hint" style="padding:0 16px 14px">
+        成交价填<b>真实成交价</b>。止损默认按「成交价 − 1×N」写定（N=ATR20；取不到退 成本×0.95），
+        之后每一行同时算三道闸门：<b>价格止损</b>（收盘 ≤ 止损）、<b>回 MA20</b>（收盘 &lt; MA20）、
+        <b>时间止损</b>（普通仓 20 个交易日 / C 类 15 个），外加<b>浮盈阶梯</b>
+        （≥15% 止损收紧到期间最高×0.92；曾达 +20% 抬到成本）。
+        <b>全部只按收盘判</b>，盘中跌破只算「触线」，不替你下单。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>观察池 · 三价台账</h3>
+        <span class="dim">点数字直接改 · 回车存 · Esc 取消 · 留空回默认</span>
+        <span class="grow"></span>
+        <button id="btnBlPoolEdit" class="ghost sm">编辑名单</button>
+      </div>
+      <div id="blPoolEdit" class="pad" style="display:none;padding-bottom:0">
+        <div class="frow" style="align-items:flex-end">
+          <label>代码<input id="bl_pool_code" placeholder="512480" size="10"></label>
+          <label>方向名<input id="bl_pool_name" placeholder="留空自动取" size="14"></label>
+          <label>备注<input id="bl_pool_note" placeholder="为什么加（可空）" size="22"></label>
+          <button id="btnBlPoolAdd" class="primary sm">加入观察池</button>
+        </div>
+        <p class="hint" style="margin:10px 0 0">
+          加池走 <code>_add_watchlist.py</code>：自动推断 sz/sh 与 secid、先备份、写盘后复验。
+          出池走 <code>_prune_watchlist.py</code>：<b>物理删行</b>（只改 status=drop 雷达照扫，等于没出池）+ 记进
+          <code>removed_log</code> + 备份。改完会自动重扫一遍（约 20 秒）。</p>
+        <div id="blPoolLog" class="hint" style="margin:8px 0 0">—</div>
+      </div>
+      <div id="blPool"><p class="dim pad">—</p></div>
+      <p class="hint" style="padding:0 16px 14px">
+        买入价默认 = 收盘；止损默认 = 收盘 − 1×N（N=ATR20，突破式口径）；卖出参考默认 = MA20（跌回均线走人）。
+        改过的数字标蓝、行尾「↺」恢复默认。<b>改价不会触发重新扫描。</b></p>
+    </div>
+
+    <div class="card prose">
+      <h3>B线路是什么</h3>
+      <p>路线B 是<b>题材 ETF 波段</b>：不打板，只做「强势突破 + 不爆量」的右侧进场。判定只有一份，在工作区
+         <code>scan_watchlist.py</code> 里（真源 [[B线路操作手册]] / §3A.1、§3A.3），这个页面只是把结果搬过来，并让你改价。</p>
+      <h3>三个价怎么用</h3>
+      <p><b>买入价</b> = 你打算或实际成交的价；<b>止损价</b> = 进场就写死的线，触及按 v1.24 三步判
+         （X 成立 → 当场卖；不成立 → 观察 30 分钟）；<b>卖出价</b> = 离场价，默认取 MA20。</p>
+      <p>仓位的默认算法：试探仓 750 元 ÷（价×100）取整手，所以价位一改，份数跟着变。</p>
+      <p class="disc">候选不是确认：尾盘 14:45~14:55 复核后才算数，16:00 收盘雷达为确认口径。
+         AI 筛选不构成买卖建议，不覆盖个人止损纪律。</p>
     </div>
   </div>
 
@@ -116,26 +208,125 @@
     </div>
   </div>
 
+  <!-- R3 卫星轮动 -->
+  <div class="pane" id="pane-r3">
+    <div class="r3bar" id="r3bar"><span class="dim">读取中…</span></div>
+
+    <div class="toolbar tight">
+      <button id="btnR3Reload" class="primary sm">重算</button>
+      <button id="btnR3Update" class="ghost sm">更新数据</button>
+      <button id="btnR3Push" class="ghost sm">推送到飞书</button>
+      <span class="grow"></span>
+      <span class="dim" id="r3PushAt">—</span>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>今天该做什么</h3>
+        <span class="dim">R3 卫星仓 6,000 元 · 每 10 个交易日调仓 · 与 A/B 线分账</span>
+      </div>
+      <div id="r3Action" class="pad">—</div>
+      <div id="r3Alerts"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>买入清单</h3>
+        <span class="dim">次日开盘执行 · 每只 3,000 元 · 点数字可改买入价/止损价/卖出价</span>
+      </div>
+      <div id="r3Buy"><p class="dim pad">—</p></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>R3 持仓</h3>
+        <span class="dim" id="r3Summary">—</span>
+      </div>
+      <div id="r3Hold"><p class="dim pad">—</p></div>
+
+      <div class="frow pad" style="border-top:1px solid var(--line)">
+        <label>代码<input id="r3_code" placeholder="513120" size="10"></label>
+        <label>名称<input id="r3_name" placeholder="可留空" size="10"></label>
+        <label>份数<input id="r3_shares" type="number" step="100" min="100" size="8"></label>
+        <label>成交价<input id="r3_cost" type="number" step="0.001" min="0" size="8"></label>
+        <label>买入日<input id="r3_date" type="date"></label>
+        <button id="btnR3Add" class="primary sm">记下成交</button>
+        <button id="btnR3Clear" class="ghost sm">清空</button>
+      </div>
+      <p class="hint" style="padding:0 16px 14px">成交价填<b>实际成交价</b>，不要填收盘价 —— 止损价按成本算，成本错了整条线就错。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>池内前 5（60 日涨幅）</h3>
+        <span class="dim" id="r3PoolInfo">—</span>
+      </div>
+      <div id="r3Pool"><p class="dim pad">—</p></div>
+      <div class="pad" style="padding-top:0">
+        <div class="frow" style="align-items:flex-end">
+          <label>排除代码<input id="r3_ex_code" placeholder="512660" size="10"></label>
+          <button id="btnR3ExAdd" class="ghost sm">加入排除</button>
+        </div>
+        <div id="r3ExList" class="hint" style="margin:10px 0 0">—</div>
+        <p class="hint" style="margin:6px 0 0">
+          R3 <b>没有「名单」</b>：池 = 全 ETF 缓存里剔掉宽基 / QDII / 债券与贵金属后的结果，所以只能排除、不能挑。
+          默认空 = 与回测口径一致；排除后会在报告里标注「已排除 N 只 · <b>回测未覆盖</b>」。</p>
+      </div>
+    </div>
+
+    <div class="card prose">
+      <h3>R3 的六条规则（写死，别临场改）</h3>
+      <ol>
+        <li><b>池</b>：境内题材 ETF，剔宽基、剔 QDII、剔债券与贵金属/商品。</li>
+        <li><b>节奏</b>：每 10 个交易日调仓一次，收盘定名单。</li>
+        <li><b>排序</b>：按过去 60 个交易日涨幅从高到低。</li>
+        <li><b>买谁</b>：先剔收盘在 MA20 下方的，再取涨幅前 2 名（可顺延）。</li>
+        <li><b>空仓开关</b>：沪深300 收盘低于 MA20 → 全部卖出，6,000 元放 1 天期逆回购。</li>
+        <li><b>成交</b>：次日开盘执行，100 份整数手，两只各 3,000 元。</li>
+      </ol>
+      <h3>建议买入价、止损价是怎么来的</h3>
+      <p><b>建议买入价</b> = 基准日收盘价，只作参考 —— R3 是次日开盘成交，实际按开盘价重算。
+         <b>挂单上限</b> = 建议买入价 ×1.02，高开超过它就放弃这只、钱留现金（这条是参考线，不在回测口径里）。</p>
+      <p><b>止损价</b>默认 = 该只的 MA20：买入要求站上 MA20，那就守住这条线，收盘跌破 → 次日开盘卖掉这一只，
+         钱回现金等下次调仓。<b>只卖这一只、不加仓、不摊平、不改轮动节奏。</b></p>
+      <p class="dim">⚠️ 回测口径里 <b>R3 本身没有个股止损</b>（真源 §三之二 风险第③条：满仓 2 只无止损，21% 回撤是真实成本）。
+         这里的止损价是叠加的风控线、<b>未回测</b>；不想要就把 config.json 的 <code>r3.stop_mode</code> 改成
+         <code>none</code>（atr / pct 是另外两种口径）。</p>
+      <h3>止损口径四选一（config.json → r3.stop_mode）</h3>
+      <p><code>ma20</code> 收盘破 MA20（默认）｜<code>atr</code> 成本 − 1×ATR20｜
+         <code>pct</code> 成本 ×0.95｜<code>none</code> 不设，只按回测口径走。</p>
+      <p class="disc">推送只在你真要做动作时发（调仓日有买卖、或持仓破止损），同一动作当天只推一次。
+         回测年化 12.25% / 回撤 21.3% 是 2016-2026 的账，幸存者偏差最重，2025 贡献了 45% 利润。不构成投资建议。</p>
+    </div>
+  </div>
+
   <!-- 说明 -->
   <div class="pane" id="pane-help">
     <div class="card prose">
       <h3>这个工具在干什么</h3>
-      <p>从全市场里筛出「<b>开盘涨 3~9% + 缩量 + 首板</b>」的票，等你挂涨停价排队。
-         这个组合在十年回测里是 <b>+4.10% / 胜率 81.9% / 10 年 10 正</b>。</p>
+      <p>从全市场里筛出「<b>首板 + 开盘涨 1~3% + 价格≥20 元</b>」的票，等你挂涨停价排队。</p>
+      <p>⚠️ <b>先说结论：打板在日线上只到打平。</b>全部触板（封住 + 炸板）期望 <b>−0.682%</b>，
+         炸板率 35.0%。上面这组条件只把炸板率压到 30.6%，四项叠加 <b>+0.020%</b>（扣费 −0.13%）。
+         <b>这组条件是压炸板率的，不是赚钱门槛，不构成开仓理由。</b></p>
+      <p>要翻正，炸板率得 ≤<b>26.05%</b>（现在差 4.4 个点）。日线变量碰不到，
+         只能等盘中封单数据（2026-10-26 起记录）。真源 [[短线交易系统]] §6.5。</p>
 
       <h3>三条最容易做错的地方</h3>
       <ol>
-        <li><b>不要提前买。</b>没封板就买（半路）是 −0.20%、胜率 44.3%。必须等它真的封在涨停价。</li>
-        <li><b>不要追量比大的。</b>量比 ≥2 时期望 −1.23%。量比越大越亏，这是十年数据里唯一完全单调的规律。</li>
-        <li><b>不要打连板。</b>首板炸了亏 5%，连板炸了亏 10%~11%，而封住只多赚 0.5 个百分点。</li>
+        <li><b>不要提前买。</b>打板必须等它真的封在涨停价，没封就买是另一套玩法（见下面的半路板）。</li>
+        <li><b>不要打连板。</b>首板炸了亏 5%，连板炸了亏 10%~11%，而封住只多赚 0.5 个百分点（连板口径 −1.854%）。</li>
+        <li><b>不要拿旧数字下单。</b>「缩量 + 开盘 3~9% = +4.10% / 81.9%」是只算封住样本的幸存者偏差，已作废。</li>
       </ol>
 
-      <h3>半路板模式是什么（2026-10-22 新增）</h3>
+      <h3>半路板模式是什么（2026-10-24 重写）</h3>
       <p>不排队封板，<b>20cm 票盘中涨到触发价（昨收 ×1.05）就买</b>，买的是日内动量延续。
-         五个条件缺一不做：只做 20cm · 开盘没越过触发价 · <b>量比≥1.5</b> · 情绪热（全市场涨停≥50 家）· <b>14:30 前挂单</b>。</p>
-      <p>回测最优配置 <b>+1.73% / 胜率 61%</b>（2020~2026 每年为正）。
-         但退市股不在回测库，数字偏乐观 —— <b>攒够 20 笔模拟记录前不上真仓</b>。</p>
-      <p>卖出三条：当天封板 → 次日开盘卖；没封 → <b>当天收盘卖</b>；跌回触发价下面 → 次日开盘清仓。</p>
+         三个条件缺一不做：<b>只做 20cm</b> · <b>开盘涨幅 &gt;2%</b> 且开盘没越过触发价 · <b>首板</b>；<b>14:30 后不接新单</b>。</p>
+      <p>可执行口径 <b>+1.381% / 胜率 50.1%（n=42,257，2020–2026 7/7 年正）</b>。
+         但 2024 单年 +4.172%（贡献过半），剔除后只剩 +0.587% —— <b>按 +0.35~0.45% 净预期，不要按 1.38%</b>。</p>
+      <p>卖出只有一个动作：<b>次一交易日收盘卖</b>，不分封没封住（T+1 合规）。
+         跌回触发价下面 → 次日开盘清仓。</p>
+      <p class="disc">旧版的「量比≥1.5」「情绪热≥50」是<b>未来函数</b>（用收盘才知道的数），
+         「未封板当天收盘卖」<b>违反 T+1</b>，都已删除。去掉后 +1.73% 掉到 +0.25%。</p>
       <p>扫描建议：触发改不了时点，开「自动刷新 60 秒」最省事；手动就扫
          <b>09:45 / 10:30 / 11:00 / 13:30 / 14:00 / 14:25</b> 这六轮，14:30 硬停。</p>
 
@@ -144,7 +335,7 @@
          次日跳空 +2.15%，次日日内 −0.28% —— 钱全在开盘那一刻，之后净流出。</p>
 
       <h3>买不进怎么办</h3>
-      <p><b>空仓，等下一个。</b>一字板本来就买不到，硬追的期望是 +0.07%，等于白干。
+      <p><b>空仓，等下一个。</b>一字板本来就买不到，新口径的事件表已经把它们剔掉了，别拿它当参照。
          平均每天只有 2~3 个符合条件的标的，不需要抢。</p>
 
       <h3>这些数字从哪来</h3>

@@ -34,27 +34,35 @@ DEFAULTS = {
         'idle_exit_seconds': 120,
     },
 
-    # 筛选条件。默认值就是回测里跑出正期望的那一组，不懂不要动
+    # 打板条件，来源真源 [[短线交易系统]] §6.5「打板前置条件」（2026-10-24）。
+    # ⚠️ 打板在日线上只能打平（全部触板 −0.682%，炸板率 35.0%）。
+    #    下面这组条件的作用是把炸板率压到 30.6%，**不是赚钱门槛**：
+    #    四项叠加 +0.020%（标准误 0.15pp，与零无差别），扣费 −0.13%。
+    #    翻正门槛是炸板率 ≤26.05%，日线变量碰不到。
     'filters': {
-        'min_gain_pct': 7.0,          # 当日涨幅下限（%），先框出「够强」的
-        'open_gain_min_pct': 3.0,     # 开盘涨幅下限（%）
-        'open_gain_max_pct': 9.0,     # 开盘涨幅上限（%），超过说明跳空太贵
-        'vr_max': 1.0,                # 预估全天量比上限
-        'max_boards': 1,              # 最大允许连板数，1 = 只要首板
+        'min_gain_pct': 7.0,          # 候选框：当日涨幅下限（%），真源无此条，只为缩表
+        'open_gain_min_pct': 1.0,     # §6.5 条件②：开盘涨幅 1~3%
+        'open_gain_max_pct': 3.0,     # 开盘 >7% 是 −1.988%，全场最差
+        'vr_max': None,               # ⚠️ 已停用：全天量比是未来函数式判据，新口径未复现
+        'max_boards': 1,              # §6.5 条件①：首板（昨日非涨停）
+        'min_price': 20.0,            # §6.5 条件④：价格 ≥20 元（低价股炸板代价更大）
+        'prefer_20cm': True,          # §6.5 条件⑤：20cm 炸板率 30.4% < 10cm 35.4%（只打标）
         'exclude_st': True,
         'exclude_bj': True,           # 排除北交所（涨跌幅 30%，样本规律不同）
         'require_sealed': False,      # True = 只列已封板的；False = 未封的也列出来盯着
     },
 
-    # 半路板模式（mode=banlu）的条件，来源 _bt_banluban.py 回测（2026-10-22）：
-    # 20cm T=5% 首板+量比≥1.5+情绪热 = +1.73%/61%，幸存者偏差未解，仅模拟盘验证
+    # 半路板模式（mode=banlu）的条件，来源真源 §6.4（2026-10-24 复核后重写）。
+    # 20cm、T=5%、开盘涨幅 >2%、首板、次一交易日收盘卖 =
+    # +1.381% / 胜率 50.1% / n=42,257，2020~2026 7/7 年正。
+    # ⚠️ 原「量比≥1.5」「情绪热≥50」是未来函数（用收盘才知道的数），已删除；
+    #    2024 单年贡献过半（+4.172%），剔除后 +0.587% → 保守 +0.35~0.45% 净。
     'banlu_filters': {
-        'trigger_pct': 5.0,      # 触发涨幅 T（%），触发价 = round(昨收×(1+T%), 2)
-        'vr_min': 1.5,           # 预估全天量比下限（第一强过滤，缺此条期望归零）
-        'hot_limit_count': 50,   # 情绪热：当日全市场涨停家数下限
+        'trigger_pct': 5.0,          # 触发涨幅 T（%），触发价 = round(昨收×(1+T%), 2)
+        'min_open_gap_pct': 2.0,     # §6.4 条件②：开盘涨幅 >2%（唯一有效的可执行过滤）
         'exclude_st': True,
         'exclude_bj': True,
-        'cutoff': '14:30',       # 此后停止接新单（尾盘胜率全场最低）
+        'cutoff': '14:30',           # 此后停止接新单（尾盘胜率全场最低）
     },
 
     # 日内累计成交量占全天的比例曲线，用于把「现在的推进率」折成「预估全天量比」。
@@ -73,6 +81,49 @@ DEFAULTS = {
     },
 
     'holdings_file': 'data/holdings.json',
+    # 三价台账（买入价/卖出价/止损价/成本价）。只存你手改过的字段
+    'levels_file': 'data/levels.json',
+    # B线路已买入台账（成交之后的持仓：写定止损 / 浮盈阶梯 / 时间止损）
+    'bline_positions_file': 'data/bline_positions.json',
+
+    # B线路选股（题材 ETF 右侧突破）。判定在工作区的 scan_watchlist.py，
+    # 这里只放路径、缓存和分账金额。workdir 留空就跟着 r3.workdir 走。
+    'bline': {
+        'workdir': '',
+        'script': 'scan_watchlist.py',
+        'python': '',
+        'cache_seconds': 180,
+        # live: auto = 交易时段用盘中半根K（--live），否则用收盘口径
+        'live': 'auto',
+        'timeout': 240,
+        # v1.23 分账：B线题材 6,000，计划位 3,000，试探仓 750
+        'budget': 6000,
+        'trial': 750,
+    },
+
+    # R3 卫星动量轮动（ETF 每 10 个交易日换仓）。规则实现在交易工作区的
+    # r3_rotation.py，这里只放路径、止损口径和推送偏好。workdir 留空就是没接。
+    'r3': {
+        'enabled': True,
+        'workdir': '',
+        'script': 'r3_rotation.py',
+        'updater': '../_update_hist.py',
+        'python': '',
+        # ma20（默认，收盘破该只 MA20 走人）｜atr｜pct｜none
+        'stop_mode': 'ma20',
+        'cache_seconds': 120,
+        'push': {
+            'enabled': True,
+            'auto': True,
+            'after': '15:00',
+            'until': '22:00',
+            'check_seconds': 600,
+            'chat_id': '',          # 留空用代码里的默认「ETF」群
+            'cli': '',
+            'run_js': '',
+            'state_file': 'data/r3_push_state.json',
+        },
+    },
 }
 
 # 环境变量名 -> 配置路径

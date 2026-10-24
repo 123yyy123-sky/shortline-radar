@@ -16,6 +16,38 @@
   DELETE /api/holdings?code= 删除一只持仓
   POST /api/filters         保存筛选条件到 config.json
   GET  /api/config          当前配置（脱敏后）
+
+R3 卫星轮动（ETF 轮动，规则在交易工作区的 r3_rotation.py）：
+  GET  /api/r3                调仓判断 + 持仓视图（?force=1 跳过缓存）
+  POST /api/r3/holdings       记一笔成交（成本=真实成交价）
+  DELETE /api/r3/holdings?code= 删掉一只
+  POST /api/r3/clear          清空持仓（全部卖了之后用）
+  POST /api/r3/push           立刻推一次飞书（force，忽略当天去重）
+  POST /api/r3/update         后台更新 K 线缓存
+
+B线路选股（判定在工作区的 scan_watchlist.py）：
+  GET  /api/bline             档位 + focus + 观察池候选（?force=1 跳过缓存，?live=1 盘中口径）
+
+B线路观察池名单（增删都走工作区脚本，出池=物理删行+removed_log+备份）：
+  GET  /api/bline/pool        名单 + 最近出池记录
+  POST /api/bline/pool        加一只（调 _add_watchlist.py）
+  DELETE /api/bline/pool?code=&reason=  出池（调 _prune_watchlist.py）
+
+B线路已买入台账（成交之后这一笔归这里管：写定止损 / 回MA20 / 浮盈阶梯 / 时间止损）：
+  GET  /api/bline/positions   全部持仓 + 汇总
+  POST /api/bline/positions   记一笔买入；带 field 则是改一个字段（value=null 回自动口径）
+  DELETE /api/bline/positions?code=  删掉一只
+  POST /api/bline/positions/clear    全部清空（都卖了之后用）
+
+R3 排除名单（R3 没有名单，只有「不要哪几只」；默认空 = 回测口径不变）：
+  GET  /api/r3/exclude        当前排除名单
+  POST /api/r3/exclude        加一只
+  DELETE /api/r3/exclude?code= 去掉一只
+
+三价台账（买入价 / 卖出价 / 止损价 / 成本价，按代码覆盖规则默认值）：
+  GET  /api/levels            全部自定义价
+  POST /api/levels            改一个价（value=null 清除回默认）
+  DELETE /api/levels?code=    整只清空
 """
 import argparse
 import io
@@ -38,6 +70,11 @@ from shortline.datasource import get_source, SourceError
 from shortline.scanner import scan, trade_session, load_benchmark
 from shortline import holdings as hold
 from shortline import notify
+from shortline import r3 as r3mod
+from shortline import bline as blinemod
+from shortline import bline_pos as bposmod
+from shortline import pool as poolmod
+from shortline import levels as levelsmod
 
 WEB = os.path.join(ROOT, 'web')
 ARGS = None
@@ -91,7 +128,7 @@ def fatal(msg):
     try:
         import ctypes
         ctypes.windll.user32.MessageBoxW(
-            0, msg, '短线雷达 —— 启动失败', 0x10)
+            0, msg, '交易台 —— 启动失败', 0x10)
     except Exception:
         pass
 
@@ -126,6 +163,11 @@ def status_payload(cfg):
         'config_exists': os.path.exists(CONFIG_PATH),
         'holdings_count': len(hold.load_holdings(cfg)),
         'filters': cfg['filters'],
+        'r3_configured': bool(((cfg.get('r3') or {}).get('workdir') or '').strip()),
+        'r3_stop_mode': (cfg.get('r3') or {}).get('stop_mode') or 'ma20',
+        'bline_configured': bool((((cfg.get('bline') or {}).get('workdir')
+                                  or (cfg.get('r3') or {}).get('workdir') or '')).strip()),
+        'levels_count': len(levelsmod.all_items(cfg)),
     }
     try:
         bench = load_benchmark()
@@ -168,7 +210,7 @@ def run_scan_async(cfg, at=None, mode='dban'):
             # 有可打的票才推通知
             if any(x['stage'] == 'pass' for x in r['rows']):
                 label = '半路板已触发' if mode == 'banlu' else '发现可打标的'
-                notify.send(cfg, f'短线雷达：{label}', notify.scan_digest(r))
+                notify.send(cfg, f'交易台：{label}', notify.scan_digest(r))
         except Exception as e:
             with LOCK:
                 STATE['error'] = f'{type(e).__name__}: {e}'
@@ -213,7 +255,7 @@ def scan_state():
 # ---------------------------------------------------------------- HTTP
 
 class Handler(SimpleHTTPRequestHandler):
-    server_version = f'ShortlineRadar/{__version__}'
+    server_version = f'TradingDesk/{__version__}'
 
     def log_message(self, fmt, *a):
         # 只打错误，静态资源的每一条日志会把控制台刷掉
@@ -269,6 +311,28 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._json(scan_state())
                 if path == '/api/holdings':
                     return self._json(holdings_payload(cfg))
+                if path == '/api/r3':
+                    force = (qs.get('force') or ['0'])[0].lower() in ('1', 'true', 'yes')
+                    asof = (qs.get('asof') or [''])[0].strip() or None
+                    return self._json(r3mod.payload(cfg, force=force, asof=asof))
+                if path == '/api/bline':
+                    force = (qs.get('force') or ['0'])[0].lower() in ('1', 'true', 'yes')
+                    lv = (qs.get('live') or [''])[0].strip().lower()
+                    live = None if lv in ('', 'auto') else (lv in ('1', 'true', 'yes'))
+                    return self._json(blinemod.payload(cfg, force=force, live=live))
+                if path == '/api/bline/pool':
+                    return self._json(poolmod.payload(cfg))
+                if path == '/api/r3/exclude':
+                    return self._json({'ok': True, 'codes': r3mod.load_exclude(cfg)})
+                if path == '/api/bline/positions':
+                    st = bposmod.load(cfg)
+                    return self._json({'ok': True, 'items': st.get('items') or [],
+                                       'updated': st.get('updated')})
+                if path == '/api/levels':
+                    st = levelsmod.load(cfg)
+                    return self._json({'items': st.get('items') or {},
+                                       'updated': st.get('updated'),
+                                       'count': len(st.get('items') or {})})
                 if path == '/api/config':
                     c = json.loads(json.dumps(cfg, default=str))
                     c.pop('_root', None)
@@ -324,6 +388,57 @@ class Handler(SimpleHTTPRequestHandler):
                 hold.upsert_holding(cfg, b)
                 return self._json({'ok': True, **holdings_payload(cfg)})
 
+            # ---------- 三价台账（买卖止损，按代码覆盖默认值）
+            if path == '/api/levels':
+                item, cleared = levelsmod.set_field(
+                    cfg, b.get('code'), b.get('field'), b.get('value'))
+                return self._json({'ok': True, 'code': levelsmod.norm_code(b.get('code')),
+                                   'item': item, 'cleared': cleared,
+                                   'levels_updated': levelsmod.load(cfg).get('updated')})
+
+            # ---------- B线路观察池名单
+            if path == '/api/bline/pool':
+                try:
+                    res = poolmod.add(cfg, b.get('code'), b.get('name'), b.get('note'))
+                except ValueError as e:
+                    return self._json({'error': str(e)}, 400)
+                return self._json(res)
+
+            # ---------- R3 排除名单
+            if path == '/api/r3/exclude':
+                codes = r3mod.set_exclude(cfg, b.get('code'))
+                return self._json({'ok': True, 'codes': codes,
+                                   'r3': r3mod.payload(cfg, force=True)})
+
+            # ---------- B线路已买入台账
+            if path == '/api/bline/positions':
+                if b.get('field'):
+                    rec = bposmod.patch(cfg, b.get('code'), b.get('field'), b.get('value'))
+                else:
+                    rec = bposmod.upsert(cfg, b)
+                st = bposmod.load(cfg)
+                return self._json({'ok': True, 'item': rec,
+                                   'count': len(st.get('items') or []),
+                                   'updated': st.get('updated')})
+            if path == '/api/bline/positions/clear':
+                bposmod.clear(cfg)
+                return self._json({'ok': True, 'items': [], 'count': 0})
+
+            # ---------- R3 卫星轮动
+            if path == '/api/r3/holdings':
+                r3mod.upsert_holding(cfg, b)
+                return self._json({'ok': True, 'r3': r3mod.payload(cfg, force=True)})
+            if path == '/api/r3/clear':
+                r3mod.clear_holdings(cfg)
+                return self._json({'ok': True, 'r3': r3mod.payload(cfg, force=True)})
+            if path == '/api/r3/push':
+                ok, msg = r3mod.push(cfg, force=True)
+                return self._json({'ok': True, 'sent': ok, 'msg': msg,
+                                   'r3': r3mod.payload(cfg)})
+            if path == '/api/r3/update':
+                started = r3mod.update_data(cfg)
+                return self._json({'ok': True, 'started': started})
+
             if path == '/api/filters':
                 f = b.get('filters') or {}
                 allowed = set(cfg['filters'])
@@ -351,6 +466,57 @@ class Handler(SimpleHTTPRequestHandler):
             cfg = self._cfg()
             hold.remove_holding(cfg, code)
             return self._json({'ok': True, **holdings_payload(cfg)})
+        if u.path == '/api/levels':
+            qs = parse_qs(u.query)
+            code = (qs.get('code') or [''])[0]
+            if not code:
+                return self._json({'error': '缺少 code'}, 400)
+            cfg = self._cfg()
+            levelsmod.clear_code(cfg, code)
+            st = levelsmod.load(cfg)
+            return self._json({'ok': True, 'items': st.get('items') or {},
+                               'updated': st.get('updated')})
+        if u.path == '/api/bline/pool':
+            qs = parse_qs(u.query)
+            code = (qs.get('code') or [''])[0]
+            if not code:
+                return self._json({'error': '缺少 code'}, 400)
+            reason = (qs.get('reason') or [''])[0]
+            cfg = self._cfg()
+            try:
+                return self._json(poolmod.remove(cfg, code, reason))
+            except Exception as e:
+                return self._json({'error': f'{type(e).__name__}: {e}'}, 400)
+        if u.path == '/api/r3/exclude':
+            code = (parse_qs(u.query).get('code') or [''])[0]
+            if not code:
+                return self._json({'error': '缺少 code'}, 400)
+            cfg = self._cfg()
+            codes = r3mod.remove_exclude(cfg, code)
+            return self._json({'ok': True, 'codes': codes,
+                               'r3': r3mod.payload(cfg, force=True)})
+        if u.path == '/api/bline/positions':
+            code = (parse_qs(u.query).get('code') or [''])[0]
+            if not code:
+                return self._json({'error': '缺少 code'}, 400)
+            cfg = self._cfg()
+            try:
+                bposmod.remove(cfg, code)
+            except ValueError as e:
+                return self._json({'error': str(e)}, 400)
+            st = bposmod.load(cfg)
+            return self._json({'ok': True, 'items': st.get('items') or [],
+                               'count': len(st.get('items') or [])})
+        if u.path == '/api/r3/holdings':
+            code = (parse_qs(u.query).get('code') or [''])[0]
+            if not code:
+                return self._json({'error': '缺少 code'}, 400)
+            cfg = self._cfg()
+            try:
+                r3mod.remove_holding(cfg, code)
+            except ValueError as e:
+                return self._json({'error': str(e)}, 400)
+            return self._json({'ok': True, 'r3': r3mod.payload(cfg, force=True)})
         return self._json({'error': 'not found'}, 404)
 
 
@@ -367,6 +533,28 @@ def port_in_use(host, port):
     finally:
         s.close()
 
+
+
+def auto_push_loop(get_cfg, interval, first_delay=5):
+    """R3 自动推送：程序开着的时候，每 interval 秒试一次。
+
+    有真动作（调仓日买卖 / 持仓破止损）才发，同一动作当天只推一次 ——
+    去重靠 data/r3_push_state.json，所以重复调用是安全的。
+    程序没开的情况用 `python app.py --push-only`（可挂 Windows 计划任务）。
+    """
+    def tick():
+        try:
+            ok, msg = r3mod.auto_push_tick(get_cfg())
+            if ok:
+                print(f'  R3 已推送：{msg}')
+        except Exception as e:
+            print(f'  R3 自动推送跳过：{type(e).__name__}: {e}')
+
+    time.sleep(max(1, first_delay))
+    tick()
+    while True:
+        time.sleep(max(60, interval))
+        tick()
 
 
 def idle_watchdog(srv, idle_exit):
@@ -396,7 +584,7 @@ def idle_watchdog(srv, idle_exit):
 def _main():
     global ARGS, SOURCE_OVERRIDE
     log_path = ensure_std_streams()
-    ap = argparse.ArgumentParser(description='短线雷达 —— A 股涨停板扫描器')
+    ap = argparse.ArgumentParser(description='交易台 —— 短线扫描 / B线路选股 / R3 轮动')
     ap.add_argument('--port', type=int, default=None)
     ap.add_argument('--host', default=None)
     ap.add_argument('--no-browser', action='store_true')
@@ -406,6 +594,8 @@ def _main():
                     help='多久没有页面请求就自动退出，0 = 常驻。默认读 config.json')
     ap.add_argument('--lan', action='store_true',
                     help='绑 0.0.0.0，让同一 WiFi 下的其他设备也能打开（默认只给本机）')
+    ap.add_argument('--push-only', action='store_true',
+                    help='只跑一次 R3 自动推送然后退出（给 Windows 计划任务用，不开界面）')
     ARGS = ap.parse_args()
 
     created = ensure_config_file()
@@ -413,6 +603,17 @@ def _main():
     if ARGS.source:
         SOURCE_OVERRIDE = ARGS.source
         cfg['data_source'] = ARGS.source
+
+    if ARGS.push_only:
+        # 给计划任务用：不开服务、不开浏览器，判断完就退出
+        print(f'R3 卫星轮动 · 自动推送检查（{datetime.now():%Y-%m-%d %H:%M}）')
+        try:
+            ok, msg = r3mod.auto_push_tick(cfg)
+        except Exception as e:
+            ok, msg = False, f'{type(e).__name__}: {e}'
+        print('  结果：%s' % ('已推送' if ok else '没推'))
+        print('  说明：%s' % msg)
+        return 0
 
     host = ARGS.host or cfg['web'].get('host', '127.0.0.1')
     if ARGS.lan:
@@ -426,7 +627,7 @@ def _main():
     else:
         idle_exit = int(cfg['web'].get('idle_exit_seconds', 120) or 0)
 
-    print(f'短线雷达 v{__version__}')
+    print(f'交易台 v{__version__}')
     print(f'  数据源：{cfg["data_source"]}   配置：{"已建 " + os.path.basename(created) if created else CONFIG_PATH}')
     if ARGS.at:
         print(f'  时点已锁定在 {ARGS.at}（回放模式）')
@@ -440,7 +641,7 @@ def _main():
         # 直接把浏览器指过去 —— 用户要的是「打开软件」，不是「看报错」。
         print(f'\n端口 {port} 上已经有一个实例在跑，直接用它。')
         print(f'  地址：{local_url}')
-        print('  （想关掉它：双击「停止短线雷达」，或者关掉浏览器等它自己退）')
+        print('  （想关掉它：双击「停止交易台」，或者关掉浏览器等它自己退）')
         if cfg['web'].get('open_browser', True) and not ARGS.no_browser:
             open_browser(local_url)
         return
@@ -453,10 +654,19 @@ def _main():
         sys.exit(1)
 
     print(f'  地址：{local_url}')
-    print('  按 Ctrl+C 停止（或者直接双击「停止短线雷达」）\n')
+    print('  按 Ctrl+C 停止（或者直接双击「停止交易台」）\n')
 
     if cfg['web'].get('open_browser', True) and not ARGS.no_browser:
         threading.Timer(0.8, lambda: open_browser(local_url)).start()
+
+    # R3 自动推送：程序开着就一直挂着，有真动作才发，当天只发一次
+    r3cfg = cfg.get('r3') or {}
+    if (r3cfg.get('workdir') or '').strip():
+        interval = int((r3cfg.get('push') or {}).get('check_seconds') or 600)
+        threading.Thread(target=auto_push_loop, args=(load_config, interval),
+                         daemon=True).start()
+        print(f'  R3 自动推送：每 {max(60, interval) // 60} 分钟查一次'
+              f'（15:00~22:00 有调仓/破止损才推）')
 
     if idle_exit > 0:
         threading.Thread(target=idle_watchdog, args=(srv, idle_exit),
