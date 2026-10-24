@@ -43,8 +43,8 @@
 需要 Python 3.9+，不装第三方库也能跑（演示模式零依赖）。
 
 ```bash
-git clone https://github.com/123yyy123-sky/shortline-radar.git
-cd shortline-radar
+git clone https://github.com/123yyy123-sky/trading-desk.git
+cd trading-desk
 python app.py
 ```
 
@@ -337,7 +337,7 @@ python tools/diag_wencai.py
 
 ```cron
 # 交易日 09:40 / 10:50 / 13:50 各扫一次，有票才推消息
-40 9,10,13 * * 1-5  cd /path/to/shortline-radar && python -m shortline.cli scan || \
+40 9,10,13 * * 1-5  cd /path/to/trading-desk && python -m shortline.cli scan || \
                     curl -X POST "$WEBHOOK" -d "$(python -m shortline.cli scan --json)"
 ```
 

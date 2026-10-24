@@ -1,4 +1,4 @@
-"""在桌面创建「短线雷达」快捷方式。
+"""在桌面创建「交易台」快捷方式。
 
 做的事：
   1. 用 Windows 的 SpecialFolders("Desktop") 取「真实桌面」路径
@@ -11,7 +11,7 @@
   任务栏和内存。改成 pythonw 之后进程在后台静默跑，日志写
   data/app.log；关掉所有浏览器页面 2 分钟后它自己退出
   （config.json 的 web.idle_exit_seconds，0 = 常驻）。
-  想手动停：双击「停止短线雷达」。
+  想手动停：双击「停止交易台」。
 
 为什么不用 pywin32：
   建快捷方式只是调 WScript.Shell，Windows 自带 cscript 就能干。
@@ -143,7 +143,7 @@ def run_vbs(vars_):
 
 def main():
     ap = argparse.ArgumentParser(description='创建桌面快捷方式')
-    ap.add_argument('--name', default='短线雷达', help='快捷方式显示名')
+    ap.add_argument('--name', default='交易台', help='快捷方式显示名')
     ap.add_argument('--desktop', default=None,
                     help='桌面路径，默认让系统给（OneDrive 重定向也能认对）')
     ap.add_argument('--force', action='store_true', help='已存在则覆盖')
@@ -203,12 +203,12 @@ def main():
         'TGT': target,
         'ARG': arguments,
         'WD': ROOT,
-        'DESC': '短线雷达 — A股涨停板扫描器（缩量 + 开盘涨 3~9% + 首板）',
+        'DESC': '交易台 — A股打板扫描（首板 / 开盘1~3% / 价格≥20），附 B线路与 R3 页签',
         'ICON': ICON if have_icon else '',
         'STOPLINK': stop_lnk_use,
         'STOPTGT': stop_target,
         'STOPARG': stop_args,
-        'STOPDESC': '关掉正在后台运行的短线雷达',
+        'STOPDESC': '关掉正在后台运行中的交易台',
     })
 
     # 校验

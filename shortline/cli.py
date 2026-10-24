@@ -47,7 +47,7 @@ def cmd_scan(cfg, args):
     if args.json:
         print(json.dumps(r, ensure_ascii=False, indent=2))
     else:
-        print(f"# 短线雷达 · {r['generated_at']} · 时点 {r['at']} · {r['session_text']}"
+        print(f"# 交易台 · {r['generated_at']} · 时点 {r['at']} · {r['session_text']}"
               f" · 模式 {'半路板' if r.get('mode') == 'banlu' else '打板'}")
         print()
         f = r['funnel']
@@ -137,7 +137,7 @@ def cmd_status(cfg, args):
 
 
 def main():
-    ap = argparse.ArgumentParser(prog='shortline', description='短线雷达命令行')
+    ap = argparse.ArgumentParser(prog='shortline', description='交易台命令行（原名短线雷达）')
     sub = ap.add_subparsers(dest='cmd')
 
     s = sub.add_parser('scan', help='扫一次')
